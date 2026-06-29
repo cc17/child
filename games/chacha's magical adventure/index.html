@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>茶茶的魔法冒险</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: radial-gradient(ellipse at center, #1a0a3e 0%, #0d0520 100%);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  min-height:100vh; overflow:hidden;
+  font-family:'PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif;
+}
+#wrap { position:relative; display:flex; flex-direction:column; align-items:center; gap:14px; }
+canvas { display:block; border-radius:16px; box-shadow:0 0 50px rgba(120,80,255,0.6), 0 0 100px rgba(80,40,180,0.3); }
+#dpad {
+  display:grid;
+  grid-template-columns: repeat(3, 64px);
+  grid-template-rows: repeat(3, 64px);
+  gap:6px;
+}
+.btn {
+  width:64px; height:64px; border-radius:14px;
+  border:2px solid rgba(255,255,255,0.25);
+  background:rgba(255,255,255,0.12);
+  backdrop-filter:blur(8px);
+  color:white; font-size:26px; cursor:pointer;
+  user-select:none; touch-action:none;
+  display:flex; align-items:center; justify-content:center;
+  transition:transform .08s, background .08s;
+  -webkit-tap-highlight-color:transparent;
+}
+.btn:active, .btn.on {
+  background:rgba(255,255,255,0.35);
+  transform:scale(0.9);
+  border-color:rgba(255,255,255,0.6);
+}
+.btn-empty { background:transparent; border:none; pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <div id="dpad">
+    <div class="btn-empty"></div>
+    <button class="btn" id="bU">▲</button>
+    <div class="btn-empty"></div>
+    <button class="btn" id="bL">◀</button>
+    <div class="btn-empty"></div>
+    <button class="btn" id="bR">▶</button>
+    <div class="btn-empty"></div>
+    <button class="btn" id="bD">▼</button>
+    <div class="btn-empty"></div>
+  </div>
+</div>
+
+<script>
+// ── Canvas setup ──────────────────────────────────────────────────────────────
+const cv = document.getElementById('c');
+const cx = cv.getContext('2d');
+
+function resize() {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const dpadH = 230;
+  const avail = vh - dpadH - 28;
+  const maxW = Math.min(vw - 12, 480);
+  const maxH = Math.min(avail, 680);
+  const scale = Math.min(maxW / 480, maxH / 680);
+  cv.width = 480; cv.height = 680;
+  cv.style.width  = Math.round(480 * scale) + 'px';
+  cv.style.height = Math.round(680 * scale) + 'px';
+}
+resize();
+window.addEventListener('resize', resize);
+const W = 480, H = 680;
+
+// ── Load images ───────────────────────────────────────────────────────────────
+const IMG = {};
+const IMG_SRC = {
+  garden: '181D1119-E1A1-45BB-B717-3CB35362E91E.PNG',
+  cloud:  '194A3ADF-B056-49E1-B20A-06727E3B244E.PNG',
+  ocean:  '5556C412-9D13-4099-8E30-30CC2EBCB0BA.PNG',
+  desert: 'D83B066C-BD40-4B97-9B80-1DA7CB22D166.PNG',
+  ice:    'CD0FB47E-A642-423E-92D5-D97862C6412A.PNG',
+  forest: '0CF1C605-E546-4505-8E64-1E938C2EEF84.PNG',
+};
+let loaded = 0;
+const total = Object.keys(IMG_SRC).length;
+Object.entries(IMG_SRC).forEach(([k,src]) => {
+  IMG[k] = new Image();
+  IMG[k].onload = () => { if(++loaded === total) boot(); };
+  IMG[k].onerror = () => { if(++loaded === total) boot(); };
+  IMG[k].src = src;
+});
+
+// ── Input ─────────────────────────────────────────────────────────────────────
+const K = { up:false, down:false, left:false, right:false };
+document.addEventListener('keydown', e => {
+  if(['ArrowUp','w','W'].includes(e.key))    K.up=true;
+  if(['ArrowDown','s','S'].includes(e.key))  K.down=true;
+  if(['ArrowLeft','a','A'].includes(e.key))  K.left=true;
+  if(['ArrowRight','d','D'].includes(e.key)) K.right=true;
+  if([' ','Enter'].includes(e.key)) tap();
+});
+document.addEventListener('keyup', e => {
+  if(['ArrowUp','w','W'].includes(e.key))    K.up=false;
+  if(['ArrowDown','s','S'].includes(e.key))  K.down=false;
+  if(['ArrowLeft','a','A'].includes(e.key))  K.left=false;
+  if(['ArrowRight','d','D'].includes(e.key)) K.right=false;
+});
+cv.addEventListener('click', tap);
+
+function bindBtn(id, dir) {
+  const el = document.getElementById(id);
+  el.addEventListener('pointerdown', e => { e.preventDefault(); K[dir]=true; el.classList.add('on'); });
+  ['pointerup','pointerleave','pointercancel'].forEach(ev =>
+    el.addEventListener(ev, () => { K[dir]=false; el.classList.remove('on'); }));
+}
+bindBtn('bU','up'); bindBtn('bD','down'); bindBtn('bL','left'); bindBtn('bR','right');
+
+// ── Level configs ─────────────────────────────────────────────────────────────
+const LEVELS = [
+  { name:'云朵跑道',   bg:'cloud',  need:6, obsCount:5,
+    obsColor:'#FFD700', obsStroke:'#FF8800', obsType:'star',
+    transMsg:'一阵龙卷风把茶茶卷上了天！\n欢迎来到云朵跑道！',
+    clearMsg:'茶茶踏过云端，却一脚踩空…\n掉进了大海里！' },
+  { name:'深海冒险',   bg:'ocean',  need:6, obsCount:6,
+    obsColor:'rgba(255,120,220,0.85)', obsStroke:'rgba(255,180,240,0.9)', obsType:'jelly',
+    transMsg:'茶茶落入了神秘大海！\n骑上海马出发吧！',
+    clearMsg:'茶茶游上了岸，眼前是一望无际的沙漠！' },
+  { name:'沙漠旅途',   bg:'desert', need:6, obsCount:7,
+    obsColor:'#5D8A3C', obsStroke:'#3B6020', obsType:'cactus',
+    transMsg:'茶茶来到了热辣辣的沙漠！\n骑上骆驼前进！',
+    clearMsg:'穿越沙漠！前方出现了冰天雪地……' },
+  { name:'冰雪王国',   bg:'ice',    need:6, obsCount:7,
+    obsColor:'#FFFFFF', obsStroke:'#AADDFF', obsType:'snowman',
+    transMsg:'茶茶进入了冰雪王国！\n骑上白鹿探索吧！',
+    clearMsg:'冰雪消融，前方是幽深的魔法森林！' },
+  { name:'魔法森林',   bg:'forest', need:7, obsCount:8,
+    obsColor:'#FF8C00', obsStroke:'#CC5500', obsType:'tiger',
+    transMsg:'最后一关！茶茶进入魔法森林！\n小心老虎，收集能量球！',
+    clearMsg:'' },
+];
+
+// ── Game state ────────────────────────────────────────────────────────────────
+let scene = 'loading'; // loading | intro | trans | level | win
+let lvIdx = 0;
+let tick = 0;
+let introPhase = 0; // 0=title, 1=tornado
+let introT = 0;
+let transT = 0;
+let winT = 0;
+
+// Player
+const PL = { x:0, y:0, w:34, h:46, spd:3.8, inv:0, dir:1 };
+
+// Level objects
+let orbs = [], obstacles = [], ptcs = [];
+let collected = 0, goalOpen = false, lvDone = false, hitFlash = 0;
+
+// ── Tap handler ───────────────────────────────────────────────────────────────
+function tap() {
+  if(scene==='intro' && introPhase===0) { introPhase=1; introT=0; }
+  if(scene==='win' && winT > 80) { resetGame(); }
+}
+
+function resetGame() {
+  scene='intro'; introPhase=0; introT=0; lvIdx=0;
+}
+
+// ── Start level ───────────────────────────────────────────────────────────────
+function startLevel(i) {
+  lvIdx = i;
+  const cfg = LEVELS[i];
+  PL.x=W/2; PL.y=H-130; PL.inv=0; PL.dir=1;
+  orbs=[]; obstacles=[]; ptcs=[];
+  collected=0; goalOpen=false; lvDone=false; hitFlash=0;
+
+  // Orbs
+  const orbN = cfg.need + Math.floor(Math.random()*3) + 2;
+  for(let j=0; j<orbN; j++) {
+    orbs.push({ x:55+Math.random()*(W-110), y:130+Math.random()*(H-290), r:13, alive:true, phase:Math.random()*Math.PI*2 });
+  }
+  // Obstacles
+  for(let j=0; j<cfg.obsCount; j++) {
+    let ox, oy;
+    do { ox=50+Math.random()*(W-100); oy=90+Math.random()*(H-220); }
+    while(Math.hypot(ox-PL.x, oy-PL.y)<120);
+    obstacles.push({
+      x:ox, y:oy, w:44, h:44,
+      vx:(Math.random()*2+0.8)*(Math.random()<0.5?1:-1),
+      vy:(Math.random()*2+0.8)*(Math.random()<0.5?1:-1),
+    });
+  }
+  scene='level';
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+function boot() { scene='intro'; introPhase=0; introT=0; requestAnimationFrame(loop); }
+
+// ── Drawing helpers ───────────────────────────────────────────────────────────
+function drawBg(key) {
+  const img = IMG[key];
+  if(!img || !img.naturalWidth) { cx.fillStyle='#111'; cx.fillRect(0,0,W,H); return; }
+  const sc = Math.max(W/img.naturalWidth, H/img.naturalHeight);
+  const dw=img.naturalWidth*sc, dh=img.naturalHeight*sc;
+  cx.drawImage(img,(W-dw)/2,(H-dh)/2,dw,dh);
+}
+
+function vignette(strength=0.55) {
+  const g = cx.createRadialGradient(W/2,H/2,H*0.25,W/2,H/2,H*0.85);
+  g.addColorStop(0,'transparent'); g.addColorStop(1,`rgba(0,0,0,${strength})`);
+  cx.fillStyle=g; cx.fillRect(0,0,W,H);
+}
+
+function starPath(cx2, cx_, cy, spikes, ro, ri) {
+  let ang = -Math.PI/2, step = Math.PI/spikes;
+  cx2.beginPath();
+  for(let i=0;i<spikes;i++){
+    cx2.lineTo(cx_+Math.cos(ang)*ro, cy+Math.sin(ang)*ro); ang+=step;
+    cx2.lineTo(cx_+Math.cos(ang)*ri, cy+Math.sin(ang)*ri); ang+=step;
+  }
+  cx2.closePath();
+}
+
+// ── Draw player ───────────────────────────────────────────────────────────────
+function drawPlayer() {
+  const {x,y,w,h,inv,dir} = PL;
+  if(inv>0 && Math.floor(inv/5)%2===1) return;
+
+  cx.save();
+  cx.scale(dir,1);
+  const px = x*dir;
+
+  // Shadow
+  cx.fillStyle='rgba(0,0,0,0.22)';
+  cx.beginPath(); cx.ellipse(px,y+h*0.52,w*0.38,7,0,0,Math.PI*2); cx.fill();
+
+  // Legs
+  cx.fillStyle='#fff';
+  cx.fillRect(px-11,y+h*0.46,9,18);
+  cx.fillRect(px+2,y+h*0.46,9,18);
+  // Shoes
+  cx.fillStyle='#FF6699';
+  cx.fillRect(px-13,y+h*0.46+16,11,6);
+  cx.fillRect(px+2,y+h*0.46+16,11,6);
+
+  // Dress body
+  cx.fillStyle='#FFB7C5';
+  cx.beginPath();
+  cx.moveTo(px-w*0.36,y+h*0.12);
+  cx.bezierCurveTo(px-w*0.44,y+h*0.3,px-w*0.44,y+h*0.42,px-w*0.38,y+h*0.5);
+  cx.lineTo(px+w*0.38,y+h*0.5);
+  cx.bezierCurveTo(px+w*0.44,y+h*0.42,px+w*0.44,y+h*0.3,px+w*0.36,y+h*0.12);
+  cx.closePath(); cx.fill();
+
+  // Skirt flare
+  cx.fillStyle='#FF8FAB';
+  cx.beginPath();
+  cx.moveTo(px-w*0.38,y+h*0.3);
+  cx.lineTo(px-w*0.52,y+h*0.5);
+  cx.lineTo(px+w*0.52,y+h*0.5);
+  cx.lineTo(px+w*0.38,y+h*0.3);
+  cx.closePath(); cx.fill();
+
+  // Collar detail
+  cx.fillStyle='rgba(255,255,255,0.5)';
+  cx.beginPath();
+  cx.moveTo(px-8,y+h*0.12); cx.lineTo(px,y+h*0.22); cx.lineTo(px+8,y+h*0.12);
+  cx.closePath(); cx.fill();
+
+  // Head
+  cx.fillStyle='#FFDAB9';
+  cx.beginPath(); cx.arc(px,y-h*0.12,w*0.31,0,Math.PI*2); cx.fill();
+
+  // Hair (blue-teal)
+  cx.fillStyle='#5BAFD6';
+  cx.beginPath();
+  cx.arc(px,y-h*0.18,w*0.32,Math.PI,0); cx.fill();
+  cx.fillRect(px-w*0.32,y-h*0.18,7,20);
+  cx.fillRect(px+w*0.25,y-h*0.18,7,20);
+  // Hair flower
+  cx.fillStyle='#FF6699';
+  cx.beginPath(); cx.arc(px+w*0.22,y-h*0.25,5,0,Math.PI*2); cx.fill();
+
+  // Eyes
+  cx.fillStyle='#4455CC';
+  cx.beginPath(); cx.arc(px-7,y-h*0.11,3,0,Math.PI*2); cx.fill();
+  cx.beginPath(); cx.arc(px+7,y-h*0.11,3,0,Math.PI*2); cx.fill();
+  // Eye shine
+  cx.fillStyle='white';
+  cx.beginPath(); cx.arc(px-6,y-h*0.125,1.2,0,Math.PI*2); cx.fill();
+  cx.beginPath(); cx.arc(px+8,y-h*0.125,1.2,0,Math.PI*2); cx.fill();
+
+  // Cheeks
+  cx.fillStyle='rgba(255,130,150,0.35)';
+  cx.beginPath(); cx.ellipse(px-11,y-h*0.06,5,3,0,0,Math.PI*2); cx.fill();
+  cx.beginPath(); cx.ellipse(px+11,y-h*0.06,5,3,0,0,Math.PI*2); cx.fill();
+
+  // Mouth
+  cx.strokeStyle='#CC5577'; cx.lineWidth=1.5;
+  cx.beginPath(); cx.arc(px,y-h*0.02,4,0.2,Math.PI-0.2); cx.stroke();
+
+  cx.restore();
+}
+
+// ── Draw obstacle ─────────────────────────────────────────────────────────────
+function drawObs(o, t) {
+  const cfg = LEVELS[lvIdx];
+  cx.save(); cx.translate(o.x,o.y);
+  const type = cfg.obsType;
+
+  if(type==='star') {
+    cx.shadowColor='#FFD700'; cx.shadowBlur=12;
+    cx.fillStyle=cfg.obsColor; cx.strokeStyle=cfg.obsStroke; cx.lineWidth=2;
+    starPath(cx,0,0,5,24,11); cx.fill(); cx.stroke();
+    cx.shadowBlur=0;
+    // Rotating inner
+    cx.save(); cx.rotate(t*0.08);
+    cx.fillStyle='rgba(255,255,255,0.5)';
+    starPath(cx,0,0,5,10,4); cx.fill();
+    cx.restore();
+  }
+  else if(type==='jelly') {
+    cx.shadowColor='rgba(255,100,220,0.7)'; cx.shadowBlur=14;
+    cx.fillStyle='rgba(255,120,210,0.75)';
+    cx.beginPath(); cx.arc(0,-6,20,Math.PI,0); cx.fill();
+    cx.fillStyle='rgba(255,180,240,0.4)';
+    cx.beginPath(); cx.arc(0,-6,20,Math.PI,0); cx.fill();
+    cx.shadowBlur=0;
+    cx.strokeStyle='rgba(255,160,230,0.7)'; cx.lineWidth=2;
+    for(let i=-2;i<=2;i++){
+      const wave = Math.sin(t*0.07+i*0.8)*6;
+      cx.beginPath(); cx.moveTo(i*7,-6);
+      cx.bezierCurveTo(i*7+wave*0.5,8, i*7-wave*0.5,14, i*7+wave,24);
+      cx.stroke();
+    }
+  }
+  else if(type==='cactus') {
+    cx.fillStyle='#4A8C3A'; cx.strokeStyle='#2E6020'; cx.lineWidth=1.5;
+    cx.fillRect(-7,-24,14,36); cx.strokeRect(-7,-24,14,36);
+    cx.fillRect(-18,-8,12,8); cx.strokeRect(-18,-8,12,8);
+    cx.fillRect(6,-12,12,8);  cx.strokeRect(6,-12,12,8);
+    cx.fillStyle='#6EBF5E';
+    cx.fillRect(-5,-22,4,32); cx.fillRect(0,-20,4,28);
+  }
+  else if(type==='snowman') {
+    cx.shadowColor='rgba(180,230,255,0.6)'; cx.shadowBlur=10;
+    cx.fillStyle='#F0F8FF'; cx.strokeStyle='#AACCEE'; cx.lineWidth=1.5;
+    cx.beginPath(); cx.arc(0,8,16,0,Math.PI*2); cx.fill(); cx.stroke();
+    cx.beginPath(); cx.arc(0,-13,11,0,Math.PI*2); cx.fill(); cx.stroke();
+    cx.shadowBlur=0;
+    cx.fillStyle='#555';
+    cx.beginPath(); cx.arc(-4,-15,2.5,0,Math.PI*2); cx.fill();
+    cx.beginPath(); cx.arc(4,-15,2.5,0,Math.PI*2); cx.fill();
+    cx.fillStyle='#FF6600';
+    cx.beginPath(); cx.moveTo(0,-13); cx.lineTo(8,-12); cx.lineTo(0,-11); cx.closePath(); cx.fill();
+    cx.fillStyle='#333';
+    for(let i=-1;i<=1;i++) { cx.beginPath(); cx.arc(i*5,6,2,0,Math.PI*2); cx.fill(); }
+    // Hat
+    cx.fillStyle='#222';
+    cx.fillRect(-10,-28,20,5);
+    cx.fillRect(-7,-44,14,18);
+  }
+  else if(type==='tiger') {
+    cx.save(); cx.rotate(Math.sin(t*0.05)*0.08);
+    // Body
+    cx.fillStyle='#E87820'; cx.strokeStyle='#AA4400'; cx.lineWidth=1.5;
+    cx.beginPath(); cx.ellipse(0,0,24,15,0,0,Math.PI*2); cx.fill(); cx.stroke();
+    // Stripes
+    cx.strokeStyle='rgba(0,0,0,0.5)'; cx.lineWidth=3;
+    cx.beginPath(); cx.moveTo(-12,-12); cx.lineTo(-8,12); cx.stroke();
+    cx.beginPath(); cx.moveTo(0,-14); cx.lineTo(0,14); cx.stroke();
+    cx.beginPath(); cx.moveTo(12,-12); cx.lineTo(8,12); cx.stroke();
+    // Head
+    cx.fillStyle='#E87820'; cx.strokeStyle='#AA4400'; cx.lineWidth=1;
+    cx.beginPath(); cx.arc(26,0,13,0,Math.PI*2); cx.fill(); cx.stroke();
+    // Ears
+    cx.fillStyle='#E87820';
+    cx.beginPath(); cx.moveTo(18,-12); cx.lineTo(21,-20); cx.lineTo(26,-12); cx.closePath(); cx.fill();
+    cx.fillStyle='#FF9999';
+    cx.beginPath(); cx.moveTo(19.5,-12); cx.lineTo(21,-17); cx.lineTo(24.5,-12); cx.closePath(); cx.fill();
+    // Eyes
+    cx.fillStyle='#1A1A00';
+    cx.beginPath(); cx.arc(23,-2,3,0,Math.PI*2); cx.fill();
+    cx.fillStyle='#90EE00';
+    cx.beginPath(); cx.arc(23,-2,1.5,0,Math.PI*2); cx.fill();
+    // Nose
+    cx.fillStyle='#CC6666';
+    cx.beginPath(); cx.arc(31,1,3,0,Math.PI*2); cx.fill();
+    // Tail
+    cx.strokeStyle='#E87820'; cx.lineWidth=5;
+    cx.beginPath(); cx.moveTo(-24,0); cx.bezierCurveTo(-32,-10,-34,10,-28,20); cx.stroke();
+    cx.restore();
+  }
+
+  cx.restore();
+}
+
+// ── Draw orb ──────────────────────────────────────────────────────────────────
+function drawOrb(o) {
+  if(!o.alive) return;
+  const pulse = Math.sin(tick*0.055+o.phase)*0.18;
+  const r = o.r*(1+pulse);
+  cx.save(); cx.translate(o.x,o.y);
+
+  // Outer glow
+  const glow = cx.createRadialGradient(0,0,0,0,0,r*2.5);
+  glow.addColorStop(0,'rgba(80,255,160,0.35)');
+  glow.addColorStop(1,'rgba(80,255,160,0)');
+  cx.fillStyle=glow; cx.beginPath(); cx.arc(0,0,r*2.5,0,Math.PI*2); cx.fill();
+
+  // Orb body
+  const g = cx.createRadialGradient(-r*0.28,-r*0.28,0,0,0,r);
+  g.addColorStop(0,'#C8FFE0');
+  g.addColorStop(0.45,'#00E87A');
+  g.addColorStop(1,'#006640');
+  cx.fillStyle=g;
+  cx.beginPath(); cx.arc(0,0,r,0,Math.PI*2); cx.fill();
+
+  // Shine
+  cx.fillStyle='rgba(255,255,255,0.65)';
+  cx.beginPath(); cx.arc(-r*0.3,-r*0.32,r*0.28,0,Math.PI*2); cx.fill();
+  cx.fillStyle='rgba(255,255,255,0.3)';
+  cx.beginPath(); cx.arc(r*0.2,r*0.2,r*0.14,0,Math.PI*2); cx.fill();
+
+  cx.restore();
+}
+
+// ── Draw goal ─────────────────────────────────────────────────────────────────
+function drawGoal() {
+  const gx=W/2, gy=72;
+  cx.save(); cx.translate(gx,gy);
+  if(goalOpen) {
+    // Pulsing portal
+    const pulse = 1+Math.sin(tick*0.08)*0.12;
+    cx.shadowColor='#FFD700'; cx.shadowBlur=30;
+    const gr = cx.createRadialGradient(0,0,0,0,0,52*pulse);
+    gr.addColorStop(0,'rgba(255,255,180,0.95)');
+    gr.addColorStop(0.35,'rgba(120,210,255,0.7)');
+    gr.addColorStop(0.7,'rgba(100,160,255,0.3)');
+    gr.addColorStop(1,'transparent');
+    cx.fillStyle=gr; cx.beginPath(); cx.arc(0,0,52*pulse,0,Math.PI*2); cx.fill();
+    cx.shadowBlur=0;
+    // Ring
+    cx.strokeStyle='#FFD700'; cx.lineWidth=4;
+    cx.beginPath(); cx.arc(0,0,38*pulse,0,Math.PI*2); cx.stroke();
+    // Inner glow
+    cx.fillStyle='rgba(220,240,255,0.82)';
+    cx.beginPath(); cx.arc(0,0,32*pulse,0,Math.PI*2); cx.fill();
+    // Star
+    cx.fillStyle='#FFD700'; cx.shadowColor='#FF8800'; cx.shadowBlur=10;
+    starPath(cx,0,0,6,16,7); cx.fill();
+    cx.shadowBlur=0;
+    cx.fillStyle='white';
+    cx.font='bold 11px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+    cx.fillText('终点', 0, 32);
+  } else {
+    // Locked gate
+    cx.fillStyle='rgba(80,80,160,0.45)';
+    cx.strokeStyle='rgba(180,180,255,0.5)'; cx.lineWidth=2;
+    cx.beginPath(); roundRect2(cx,-38,-28,76,56,10); cx.fill(); cx.stroke();
+    cx.fillStyle='rgba(255,255,255,0.7)';
+    cx.font='12px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+    cx.fillText('终点', 0, -6);
+    cx.font='10px sans-serif';
+    cx.fillStyle='rgba(200,220,255,0.8)';
+    cx.fillText(`收集 ${LEVELS[lvIdx].need} 个能量球`, 0, 12);
+  }
+  cx.restore();
+}
+
+function roundRect2(c,x,y,w,h,r) {
+  c.moveTo(x+r,y); c.lineTo(x+w-r,y); c.arcTo(x+w,y,x+w,y+r,r);
+  c.lineTo(x+w,y+h-r); c.arcTo(x+w,y+h,x+w-r,y+h,r);
+  c.lineTo(x+r,y+h); c.arcTo(x,y+h,x,y+h-r,r);
+  c.lineTo(x,y+r); c.arcTo(x,y,x+r,y,r); c.closePath();
+}
+
+// ── Draw HUD ──────────────────────────────────────────────────────────────────
+function drawHUD() {
+  const cfg = LEVELS[lvIdx];
+  // Bar bg
+  cx.fillStyle='rgba(0,0,0,0.5)';
+  cx.beginPath(); roundRect2(cx,0,0,W,54,0); cx.fill();
+
+  // Level name
+  cx.fillStyle='#FFE066';
+  cx.font='bold 16px sans-serif'; cx.textAlign='left'; cx.textBaseline='middle';
+  cx.fillText(`第 ${lvIdx+1} 关  ${cfg.name}`, 14, 18);
+
+  // Orb count
+  cx.fillStyle='white';
+  cx.font='bold 16px sans-serif'; cx.textAlign='right';
+  cx.fillText(`💎 ${collected} / ${cfg.need}`, W-12, 18);
+
+  // Progress bar
+  const barX=14, barY=34, barW=W-28, barH=10;
+  cx.fillStyle='rgba(255,255,255,0.15)';
+  cx.beginPath(); roundRect2(cx,barX,barY,barW,barH,5); cx.fill();
+  const pct = Math.min(collected/cfg.need,1);
+  if(pct>0){
+    const g = cx.createLinearGradient(barX,0,barX+barW,0);
+    g.addColorStop(0,'#00FF88'); g.addColorStop(1,'#00BBFF');
+    cx.fillStyle=g;
+    cx.beginPath(); roundRect2(cx,barX,barY,barW*pct,barH,5); cx.fill();
+  }
+  // Star markers
+  for(let i=0;i<cfg.need;i++){
+    const sx = barX + (barW/(cfg.need-1||1))*i;
+    cx.fillStyle = (i < collected) ? '#FFD700' : 'rgba(255,255,255,0.3)';
+    cx.font='8px sans-serif'; cx.textAlign='center';
+    cx.fillText('★', sx, barY+5);
+  }
+}
+
+// ── Particles ─────────────────────────────────────────────────────────────────
+function spawnOrbPtcs(x,y) {
+  for(let i=0;i<12;i++){
+    const angle = Math.random()*Math.PI*2;
+    const spd = 2+Math.random()*4;
+    ptcs.push({
+      x,y,r:3+Math.random()*4,
+      vx:Math.cos(angle)*spd, vy:Math.sin(angle)*spd-1,
+      life:35, max:35,
+      color:`hsl(${100+Math.random()*80},100%,${60+Math.random()*20}%)`
+    });
+  }
+}
+
+function drawPtcs() {
+  ptcs = ptcs.filter(p=>p.life>0);
+  for(const p of ptcs){
+    cx.save();
+    cx.globalAlpha=p.life/p.max;
+    cx.fillStyle=p.color;
+    cx.beginPath(); cx.arc(p.x,p.y,p.r*(p.life/p.max),0,Math.PI*2); cx.fill();
+    cx.restore();
+    p.x+=p.vx; p.y+=p.vy; p.vy+=0.18; p.life--;
+  }
+}
+
+// ── Scene: Intro ──────────────────────────────────────────────────────────────
+function drawIntro() {
+  introT++;
+  drawBg('garden'); vignette(0.5);
+
+  if(introPhase===0) {
+    // Title screen
+    const alpha = Math.min(introT/40,1);
+    cx.save(); cx.globalAlpha=alpha;
+
+    // Glass card
+    cx.fillStyle='rgba(10,5,30,0.7)';
+    cx.beginPath(); roundRect2(cx,W/2-170,H/2-90,340,180,18); cx.fill();
+    cx.strokeStyle='rgba(180,140,255,0.4)'; cx.lineWidth=1.5;
+    cx.beginPath(); roundRect2(cx,W/2-170,H/2-90,340,180,18); cx.stroke();
+
+    // Title
+    cx.fillStyle='#FFD700';
+    cx.font='bold 30px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+    cx.shadowColor='#FF8800'; cx.shadowBlur=15;
+    cx.fillText('茶茶的魔法冒险', W/2, H/2-40);
+    cx.shadowBlur=0;
+
+    cx.fillStyle='rgba(255,255,255,0.88)';
+    cx.font='15px sans-serif';
+    cx.fillText('茶茶在花园浇花，突然一阵龙卷风…', W/2, H/2+2);
+
+    // Blinking prompt
+    if(Math.floor(introT/28)%2===0) {
+      cx.fillStyle='rgba(255,220,100,0.9)';
+      cx.font='bold 16px sans-serif';
+      cx.fillText('▶ 点击开始冒险 ◀', W/2, H/2+50);
+    }
+    cx.restore();
+  } else {
+    // Tornado animation
+    const t = introT;
+    cx.save();
+    cx.translate(W/2, H/2);
+    cx.rotate(t*0.18);
+
+    // Spiral rings
+    for(let i=0;i<5;i++){
+      const r = 20+i*25+t*1.2;
+      const al = Math.max(0, 0.7-r/220);
+      cx.strokeStyle=`rgba(180,160,255,${al})`;
+      cx.lineWidth=3-i*0.4;
+      cx.beginPath(); cx.arc(0,0,Math.min(r,180),0,Math.PI*2); cx.stroke();
+    }
+
+    // Inner bright core
+    const gc = cx.createRadialGradient(0,0,0,0,0,60);
+    gc.addColorStop(0,'rgba(255,255,255,0.9)');
+    gc.addColorStop(0.4,'rgba(180,140,255,0.6)');
+    gc.addColorStop(1,'rgba(100,80,200,0)');
+    cx.fillStyle=gc; cx.beginPath(); cx.arc(0,0,60,0,Math.PI*2); cx.fill();
+    cx.restore();
+
+    cx.fillStyle='rgba(0,0,0,0.45)';
+    cx.fillRect(0,H*0.78,W,H*0.22);
+    cx.fillStyle='white'; cx.font='bold 19px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+    cx.fillText('龙卷风来啦！茶茶被卷上了天！', W/2, H*0.86);
+    cx.fillStyle='rgba(255,220,100,0.85)'; cx.font='14px sans-serif';
+    cx.fillText('冒险开始……', W/2, H*0.93);
+
+    if(t > 110) { scene='trans'; transT=0; lvIdx=-1; }
+  }
+}
+
+// ── Scene: Transition ─────────────────────────────────────────────────────────
+function drawTrans() {
+  transT++;
+  const nextLv = lvIdx+1;
+  const cfg = LEVELS[nextLv];
+  drawBg(cfg.bg); vignette(0.6);
+
+  const fadeIn = Math.min(transT/35,1);
+  cx.fillStyle=`rgba(0,0,0,${1-fadeIn})`; cx.fillRect(0,0,W,H);
+
+  if(transT > 30) {
+    const msg = (lvIdx===-1) ? LEVELS[0].transMsg : LEVELS[lvIdx].clearMsg || LEVELS[nextLv].transMsg;
+    const lines = msg.split('\n');
+    cx.fillStyle='rgba(0,0,0,0.55)';
+    cx.beginPath(); roundRect2(cx,W/2-180,H/2-55,360,110,14); cx.fill();
+    cx.fillStyle='#FFE066'; cx.font='bold 18px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+    cx.fillText(lines[0]||'', W/2, H/2-16);
+    cx.fillStyle='rgba(255,255,255,0.85)'; cx.font='15px sans-serif';
+    cx.fillText(lines[1]||'', W/2, H/2+16);
+  }
+
+  if(transT > 95) { startLevel(nextLv); }
+}
+
+// ── Scene: Level ──────────────────────────────────────────────────────────────
+function updateLevel() {
+  tick++;
+  if(lvDone) return;
+
+  // Move player
+  const spd = PL.spd;
+  let moved = false;
+  if(K.up)    { PL.y = Math.max(58, PL.y-spd); moved=true; }
+  if(K.down)  { PL.y = Math.min(H-35,PL.y+spd); moved=true; }
+  if(K.left)  { PL.x = Math.max(22, PL.x-spd); PL.dir=-1; moved=true; }
+  if(K.right) { PL.x = Math.min(W-22,PL.x+spd); PL.dir=1;  moved=true; }
+  if(PL.inv>0) PL.inv--;
+
+  // Move obstacles
+  for(const o of obstacles){
+    o.x+=o.vx; o.y+=o.vy;
+    if(o.x<28||o.x>W-28) o.vx*=-1;
+    if(o.y<65||o.y>H-40)  o.vy*=-1;
+
+    // Collision
+    if(PL.inv===0) {
+      if(Math.abs(o.x-PL.x)<30 && Math.abs(o.y-PL.y)<28) {
+        PL.inv=90; hitFlash=18;
+      }
+    }
+  }
+  if(hitFlash>0) hitFlash--;
+
+  // Collect orbs
+  for(const orb of orbs){
+    if(!orb.alive) continue;
+    if(Math.hypot(orb.x-PL.x, orb.y-PL.y) < orb.r+22){
+      orb.alive=false; collected++;
+      spawnOrbPtcs(orb.x,orb.y);
+      if(collected>=LEVELS[lvIdx].need) goalOpen=true;
+    }
+  }
+
+  // Reach goal
+  if(goalOpen && Math.hypot(W/2-PL.x, 72-PL.y)<46){
+    lvDone=true;
+    setTimeout(()=>{
+      if(lvIdx+1 < LEVELS.length) { scene='trans'; transT=0; }
+      else { scene='win'; winT=0; }
+    }, 1100);
+  }
+}
+
+function drawLevel() {
+  const cfg = LEVELS[lvIdx];
+  drawBg(cfg.bg);
+
+  // Hit flash
+  if(hitFlash>0){ cx.fillStyle=`rgba(255,0,0,${hitFlash*0.028})`; cx.fillRect(0,0,W,H); }
+
+  drawGoal();
+  for(const o of orbs) drawOrb(o);
+  for(const o of obstacles) drawObs(o, tick);
+  drawPlayer();
+  drawPtcs();
+  drawHUD();
+
+  // Level clear overlay
+  if(lvDone){
+    cx.fillStyle='rgba(0,0,0,0.42)'; cx.fillRect(0,0,W,H);
+    cx.fillStyle='#FFD700'; cx.shadowColor='#FF8800'; cx.shadowBlur=20;
+    cx.font='bold 34px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+    cx.fillText('✨ 关卡完成！', W/2, H/2-20);
+    cx.shadowBlur=0;
+    cx.fillStyle='rgba(255,255,255,0.9)'; cx.font='18px sans-serif';
+    cx.fillText('茶茶继续前进…', W/2, H/2+28);
+  }
+}
+
+// ── Scene: Win ────────────────────────────────────────────────────────────────
+function drawWin() {
+  winT++;
+  drawBg('garden'); vignette(0.35);
+
+  // Confetti
+  for(let i=0;i<12;i++){
+    const hue = (winT*3+i*30)%360;
+    const x = (winT*17+i*137)%W;
+    const y = (winT*11+i*97)%H;
+    cx.fillStyle=`hsla(${hue},90%,65%,0.7)`;
+    cx.beginPath(); cx.arc(x,y,4,0,Math.PI*2); cx.fill();
+  }
+
+  cx.fillStyle='rgba(5,2,20,0.6)';
+  cx.beginPath(); roundRect2(cx,W/2-185,H/2-110,370,220,20); cx.fill();
+  cx.strokeStyle='rgba(255,215,0,0.4)'; cx.lineWidth=2;
+  cx.beginPath(); roundRect2(cx,W/2-185,H/2-110,370,220,20); cx.stroke();
+
+  cx.fillStyle='#FFD700'; cx.shadowColor='#FF8800'; cx.shadowBlur=20;
+  cx.font='bold 28px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+  cx.fillText('🎉 茶茶回家了！', W/2, H/2-62);
+  cx.shadowBlur=0;
+
+  cx.fillStyle='rgba(255,255,255,0.92)'; cx.font='16px sans-serif';
+  cx.fillText('茶茶穿越了云端、大海、沙漠、', W/2, H/2-20);
+  cx.fillText('冰雪王国和魔法森林，', W/2, H/2+8);
+  cx.fillText('终于平安回到了温暖的小木屋！', W/2, H/2+36);
+
+  cx.fillStyle='rgba(255,220,80,0.7)'; cx.font='15px sans-serif';
+  cx.fillText('茶茶是最勇敢的小冒险家！ 🌸', W/2, H/2+72);
+
+  if(winT > 80) {
+    if(Math.floor(winT/30)%2===0){
+      cx.fillStyle='rgba(255,255,255,0.75)'; cx.font='14px sans-serif';
+      cx.fillText('▶ 点击重新开始 ◀', W/2, H/2+106);
+    }
+  }
+}
+
+// ── Main loop ─────────────────────────────────────────────────────────────────
+function loop() {
+  cx.clearRect(0,0,W,H);
+
+  if(scene==='loading'){
+    cx.fillStyle='#1a0a3e'; cx.fillRect(0,0,W,H);
+    cx.fillStyle='white'; cx.font='20px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+    cx.fillText('加载中…', W/2, H/2);
+  } else if(scene==='intro')  { drawIntro(); }
+  else if(scene==='trans')    { drawTrans(); }
+  else if(scene==='level')    { updateLevel(); drawLevel(); }
+  else if(scene==='win')      { drawWin(); }
+
+  requestAnimationFrame(loop);
+}
+
+// Start render loop immediately (shows loading until images ready)
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
