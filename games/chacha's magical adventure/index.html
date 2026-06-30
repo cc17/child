@@ -157,7 +157,7 @@ const PL = { x:0, y:0, w:34, h:46, spd:3.8, inv:0, dir:1 };
 
 // Level objects
 let orbs = [], obstacles = [], ptcs = [];
-let collected = 0, goalOpen = false, lvDone = false, hitFlash = 0;
+let collected = 0, goalOpen = false, lvDone = false, hitFlash = 0, lives = 6;
 
 // ── Tap handler ───────────────────────────────────────────────────────────────
 function tap() {
@@ -175,7 +175,7 @@ function startLevel(i) {
   const cfg = LEVELS[i];
   PL.x=W/2; PL.y=H-130; PL.inv=0; PL.dir=1;
   orbs=[]; obstacles=[]; ptcs=[];
-  collected=0; goalOpen=false; lvDone=false; hitFlash=0;
+  collected=0; goalOpen=false; lvDone=false; hitFlash=0; lives=6;
 
   // Orbs
   const orbN = cfg.need + Math.floor(Math.random()*3) + 2;
@@ -483,20 +483,26 @@ function drawHUD() {
   const cfg = LEVELS[lvIdx];
   // Bar bg
   cx.fillStyle='rgba(0,0,0,0.5)';
-  cx.beginPath(); roundRect2(cx,0,0,W,54,0); cx.fill();
+  cx.beginPath(); roundRect2(cx,0,0,W,64,0); cx.fill();
 
   // Level name
   cx.fillStyle='#FFE066';
   cx.font='bold 16px sans-serif'; cx.textAlign='left'; cx.textBaseline='middle';
-  cx.fillText(`第 ${lvIdx+1} 关  ${cfg.name}`, 14, 18);
+  cx.fillText(`第 ${lvIdx+1} 关  ${cfg.name}`, 14, 16);
 
   // Orb count
   cx.fillStyle='white';
   cx.font='bold 16px sans-serif'; cx.textAlign='right';
-  cx.fillText(`💎 ${collected} / ${cfg.need}`, W-12, 18);
+  cx.fillText(`💎 ${collected} / ${cfg.need}`, W-12, 16);
+
+  // Lives (hearts)
+  cx.font='18px sans-serif'; cx.textAlign='left'; cx.textBaseline='middle';
+  let heartsStr = '';
+  for(let i=0;i<6;i++) heartsStr += (i < lives) ? '❤️' : '🖤';
+  cx.fillText(heartsStr, 12, 38);
 
   // Progress bar
-  const barX=14, barY=34, barW=W-28, barH=10;
+  const barX=14, barY=52, barW=W-28, barH=8;
   cx.fillStyle='rgba(255,255,255,0.15)';
   cx.beginPath(); roundRect2(cx,barX,barY,barW,barH,5); cx.fill();
   const pct = Math.min(collected/cfg.need,1);
@@ -658,6 +664,12 @@ function updateLevel() {
     if(PL.inv===0) {
       if(Math.abs(o.x-PL.x)<30 && Math.abs(o.y-PL.y)<28) {
         PL.inv=90; hitFlash=18;
+        lives--;
+        spawnOrbPtcs(PL.x, PL.y); // reuse particle burst for hit feedback
+        if(lives<=0) {
+          lvDone=true;
+          setTimeout(()=>{ startLevel(lvIdx); }, 1200);
+        }
       }
     }
   }
@@ -697,15 +709,25 @@ function drawLevel() {
   drawPtcs();
   drawHUD();
 
-  // Level clear overlay
+  // Level done overlay
   if(lvDone){
     cx.fillStyle='rgba(0,0,0,0.42)'; cx.fillRect(0,0,W,H);
-    cx.fillStyle='#FFD700'; cx.shadowColor='#FF8800'; cx.shadowBlur=20;
-    cx.font='bold 34px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
-    cx.fillText('✨ 关卡完成！', W/2, H/2-20);
-    cx.shadowBlur=0;
-    cx.fillStyle='rgba(255,255,255,0.9)'; cx.font='18px sans-serif';
-    cx.fillText('茶茶继续前进…', W/2, H/2+28);
+    if(lives<=0){
+      // Game over for this level
+      cx.fillStyle='#FF4466'; cx.shadowColor='#CC0033'; cx.shadowBlur=20;
+      cx.font='bold 34px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+      cx.fillText('💔 茶茶倒下了…', W/2, H/2-20);
+      cx.shadowBlur=0;
+      cx.fillStyle='rgba(255,255,255,0.85)'; cx.font='18px sans-serif';
+      cx.fillText('重新挑战这一关！', W/2, H/2+28);
+    } else {
+      cx.fillStyle='#FFD700'; cx.shadowColor='#FF8800'; cx.shadowBlur=20;
+      cx.font='bold 34px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+      cx.fillText('✨ 关卡完成！', W/2, H/2-20);
+      cx.shadowBlur=0;
+      cx.fillStyle='rgba(255,255,255,0.9)'; cx.font='18px sans-serif';
+      cx.fillText('茶茶继续前进…', W/2, H/2+28);
+    }
   }
 }
 
