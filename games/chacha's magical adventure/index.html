@@ -174,7 +174,7 @@ function startLevel(i) {
 
   const orbN = cfg.need + Math.floor(Math.random()*3) + 2;
   for(let j=0; j<orbN; j++)
-    orbs.push({ x:55+Math.random()*(W-110), y:140+Math.random()*(H-300), r:13, alive:true, phase:Math.random()*Math.PI*2 });
+    orbs.push({ x:55+Math.random()*(W-110), y:140+Math.random()*(H-300), r:16, alive:true, phase:Math.random()*Math.PI*2 });
 
   const rspd = () => (Math.random()*1.6+0.7)*(Math.random()<0.5?1:-1);
   for(let j=0; j<cfg.obsCount; j++) {
@@ -470,12 +470,41 @@ function drawObs(o, t) {
   cx.restore();
 }
 
+// ── "Collect me!" beacon drawn behind every collectible so it never
+//    blends into a busy background ──────────────────────────────────────────────
+function drawCollectBeacon(r) {
+  // Soft dark separation halo — makes the orb pop on BRIGHT bgs (clouds/desert/snow)
+  const dh=cx.createRadialGradient(0,0,r*0.7,0,0,r*2.8);
+  dh.addColorStop(0,'rgba(0,0,0,0)'); dh.addColorStop(0.55,'rgba(0,0,0,0.30)'); dh.addColorStop(1,'rgba(0,0,0,0)');
+  cx.fillStyle=dh; cx.beginPath(); cx.arc(0,0,r*2.8,0,Math.PI*2); cx.fill();
+  // Bright pulsing target ring — dark under-stroke + white over-stroke so it
+  // reads on ANY background (bright clouds/snow OR dark forest/ocean)
+  const rp=Math.max(4, r*1.75+Math.sin(tick*0.12)*3);
+  cx.save();
+  cx.strokeStyle='rgba(0,0,0,0.4)'; cx.lineWidth=5;
+  cx.beginPath(); cx.arc(0,0,rp,0,Math.PI*2); cx.stroke();
+  cx.shadowColor='rgba(255,255,255,0.95)'; cx.shadowBlur=10;
+  cx.strokeStyle='rgba(255,255,255,0.95)'; cx.lineWidth=2.5;
+  cx.beginPath(); cx.arc(0,0,rp,0,Math.PI*2); cx.stroke();
+  cx.restore();
+  // Orbiting sparkle dots to draw the eye
+  for(let i=0;i<3;i++){
+    const a=tick*0.05+i*Math.PI*2/3;
+    cx.fillStyle='rgba(255,255,255,0.95)';
+    cx.shadowColor='rgba(255,255,255,0.9)'; cx.shadowBlur=6;
+    cx.beginPath(); cx.arc(Math.cos(a)*rp,Math.sin(a)*rp,2.4,0,Math.PI*2); cx.fill();
+  }
+  cx.shadowBlur=0;
+}
+
 // ── Draw orb (level-specific collectibles) ────────────────────────────────────
 function drawOrb(o) {
   if(!o.alive) return;
   const pulse=Math.sin(tick*0.055+o.phase)*0.18;
   const r=o.r*(1+pulse);
-  cx.save(); cx.translate(o.x,o.y);
+  const bob=Math.sin(tick*0.08+o.phase)*3;         // gentle float to catch the eye
+  cx.save(); cx.translate(o.x,o.y+bob);
+  drawCollectBeacon(r);                             // beacon first, behind the gem
   switch(lvIdx) {
     case 0: { // Cloud - Rainbow spinning star gem
       const hue=(tick*2.5+o.phase*60)%360;
@@ -635,8 +664,8 @@ function drawAmbient(t) {
     case 0: // Cloud - drifting sparkles
       for(let i=0;i<16;i++){
         const x=(t*0.4+i*143)%W, y=(t*0.25+i*97)%H;
-        const al=Math.sin(t*0.06+i)*0.4+0.3, sz=1+Math.sin(t*0.05+i*0.7)*1.5;
-        cx.fillStyle=`rgba(255,230,100,${al})`; cx.beginPath(); cx.arc(x,y,sz,0,Math.PI*2); cx.fill();
+        const al=Math.max(0,Math.sin(t*0.06+i)*0.4+0.3), sz=1.4+Math.sin(t*0.05+i*0.7)*1.0;
+        cx.fillStyle=`rgba(255,230,100,${al})`; cx.beginPath(); cx.arc(x,y,Math.max(0.2,sz),0,Math.PI*2); cx.fill();
       }
       break;
     case 1: // Ocean - rising bubbles
@@ -976,17 +1005,22 @@ function drawWin() {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 function loop() {
-  cx.clearRect(0,0,W,H);
+  try {
+    cx.clearRect(0,0,W,H);
 
-  if(scene==='loading'){
-    cx.fillStyle='#1a0a3e'; cx.fillRect(0,0,W,H);
-    cx.fillStyle='white'; cx.font='20px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
-    cx.fillText('加载中…', W/2, H/2);
-  } else if(scene==='intro')  { drawIntro(); }
-  else if(scene==='trans')    { drawTrans(); }
-  else if(scene==='level')    { updateLevel(); drawLevel(); }
-  else if(scene==='win')      { drawWin(); }
-
+    if(scene==='loading'){
+      cx.fillStyle='#1a0a3e'; cx.fillRect(0,0,W,H);
+      cx.fillStyle='white'; cx.font='20px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+      cx.fillText('加载中…', W/2, H/2);
+    } else if(scene==='intro')  { drawIntro(); }
+    else if(scene==='trans')    { drawTrans(); }
+    else if(scene==='level')    { updateLevel(); drawLevel(); }
+    else if(scene==='win')      { drawWin(); }
+  } catch(err) {
+    // A single bad frame must never freeze the whole game.
+    console.error('frame error:', err);
+  }
+  // Always schedule the next frame, even if this one threw.
   requestAnimationFrame(loop);
 }
 
