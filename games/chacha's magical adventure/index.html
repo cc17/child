@@ -87,10 +87,12 @@ let loaded = 0;
 const total = Object.keys(IMG_SRC).length;
 Object.entries(IMG_SRC).forEach(([k,src]) => {
   IMG[k] = new Image();
-  IMG[k].onload = () => { if(++loaded === total) boot(); };
-  IMG[k].onerror = () => { if(++loaded === total) boot(); };
+  IMG[k].onload = () => { if(++loaded >= total) boot(); };
+  IMG[k].onerror = () => { if(++loaded >= total) boot(); };
   IMG[k].src = src;
 });
+// Safety net: if some image hangs or never fires, boot anyway after 4s
+setTimeout(() => { if(scene==='loading') boot(); }, 4000);
 
 // ── Input ─────────────────────────────────────────────────────────────────────
 const K = { up:false, down:false, left:false, right:false };
@@ -201,7 +203,14 @@ function startLevel(i) {
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
-function boot() { scene='intro'; introPhase=0; introT=0; requestAnimationFrame(loop); }
+let booted = false;
+function boot() {
+  if(booted) return;            // guard: only boot once
+  booted = true;
+  scene='intro'; introPhase=0; introT=0;
+  // NOTE: render loop is already running (started at bottom of script);
+  // do NOT start a second requestAnimationFrame here.
+}
 
 // ── Drawing helpers ───────────────────────────────────────────────────────────
 function drawBg(key) {
