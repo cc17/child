@@ -76,12 +76,12 @@ const W = 480, H = 680;
 // ── Load images ───────────────────────────────────────────────────────────────
 const IMG = {};
 const IMG_SRC = {
-  garden: '181D1119-E1A1-45BB-B717-3CB35362E91E.PNG',
-  cloud:  '194A3ADF-B056-49E1-B20A-06727E3B244E.PNG',
-  ocean:  '5556C412-9D13-4099-8E30-30CC2EBCB0BA.PNG',
-  desert: 'D83B066C-BD40-4B97-9B80-1DA7CB22D166.PNG',
-  ice:    'CD0FB47E-A642-423E-92D5-D97862C6412A.PNG',
-  forest: '0CF1C605-E546-4505-8E64-1E938C2EEF84.PNG',
+  garden: 'garden.jpg',
+  cloud:  'cloud.jpg',
+  ocean:  'ocean.jpg',
+  desert: 'desert.jpg',
+  ice:    'ice.jpg',
+  forest: 'forest.jpg',
 };
 let loaded = 0;
 const total = Object.keys(IMG_SRC).length;
@@ -109,7 +109,24 @@ document.addEventListener('keyup', e => {
   if(['ArrowLeft','a','A'].includes(e.key))  K.left=false;
   if(['ArrowRight','d','D'].includes(e.key)) K.right=false;
 });
-cv.addEventListener('click', tap);
+cv.addEventListener('click', e => {
+  const r=cv.getBoundingClientRect();
+  tap((e.clientX-r.left)*W/r.width, (e.clientY-r.top)*H/r.height);
+});
+
+// ── Touch-drag control: drag a finger on the canvas to steer 茶茶 directly ─────
+const DRAG = { on:false, x:0, y:0 };
+cv.addEventListener('pointerdown', e => {
+  const r=cv.getBoundingClientRect();
+  DRAG.on=true; DRAG.x=(e.clientX-r.left)*W/r.width; DRAG.y=(e.clientY-r.top)*H/r.height;
+});
+cv.addEventListener('pointermove', e => {
+  if(!DRAG.on) return;
+  const r=cv.getBoundingClientRect();
+  DRAG.x=(e.clientX-r.left)*W/r.width; DRAG.y=(e.clientY-r.top)*H/r.height;
+});
+['pointerup','pointerleave','pointercancel'].forEach(ev =>
+  cv.addEventListener(ev, () => { DRAG.on=false; }));
 
 function bindBtn(id, dir) {
   const el = document.getElementById(id);
@@ -118,6 +135,37 @@ function bindBtn(id, dir) {
     el.addEventListener(ev, () => { K[dir]=false; el.classList.remove('on'); }));
 }
 bindBtn('bU','up'); bindBtn('bD','down'); bindBtn('bL','left'); bindBtn('bR','right');
+
+// ── Sound effects (WebAudio, fully synthesized — no audio files) ───────────────
+let AC=null;
+function ac() {
+  if(!AC) { try { AC=new (window.AudioContext||window.webkitAudioContext)(); } catch(e){ return null; } }
+  if(AC && AC.state==='suspended') AC.resume();
+  return AC;
+}
+// one enveloped oscillator note
+function tone(freq, dur, type='sine', vol=0.18, delay=0, slide=0) {
+  const a=ac(); if(!a) return;
+  const t0=a.currentTime+delay;
+  const o=a.createOscillator(), g=a.createGain();
+  o.type=type; o.frequency.setValueAtTime(freq,t0);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30,freq+slide), t0+dur);
+  g.gain.setValueAtTime(0,t0);
+  g.gain.linearRampToValueAtTime(vol, t0+0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+  o.connect(g); g.connect(a.destination);
+  o.start(t0); o.stop(t0+dur+0.05);
+}
+const sfx = {
+  collect(){ tone(880,.10,'sine',.22); tone(1318,.14,'sine',.16,.06); },          // sparkly ding
+  hurt(){ tone(200,.22,'sawtooth',.25,0,-120); tone(90,.25,'square',.12,.02,-30); }, // low thud
+  goal(){ [523,659,784,1047].forEach((f,i)=>tone(f,.16,'triangle',.2,i*.09)); },   // portal opens
+  clear(){ [523,659,784,1047,1319].forEach((f,i)=>tone(f,.22,'triangle',.22,i*.11)); }, // fanfare
+  win(){ [523,659,784,1047,784,1047,1319,1568].forEach((f,i)=>tone(f,.25,'triangle',.22,i*.13)); },
+  fall(){ tone(900,.7,'sine',.2,0,-750); },                                        // whoosh down
+  start(){ tone(300,.5,'sawtooth',.15,0,500); tone(150,.6,'triangle',.12,.05,300); }, // tornado rise
+  die(){ [392,330,262,196].forEach((f,i)=>tone(f,.22,'triangle',.2,i*.12)); },     // sad descend
+};
 
 // ── Level configs ─────────────────────────────────────────────────────────────
 const LEVELS = [
@@ -150,14 +198,95 @@ let winT = 0;
 // Player
 const PL = { x:0, y:0, w:34, h:46, spd:3.8, inv:0, dir:1 };
 
+// ── Photo-hero sprites ─────────────────────────────────────────────────────────
+// Each level's heroine (with her mount) is CUT OUT of the level photo itself and
+// becomes the sprite you control. `x/y/w/h` are fractions of the source image,
+// `patch` says where to sample background texture to cover her original spot,
+// `dh` is the on-canvas display height.
+const HERO_RECT = {
+  garden: { x:0.330, y:0.185, w:0.400, h:0.700, patch:{dx:-0.31, dy: 0.10}, dh:150 },
+  cloud:  { x:0.385, y:0.360, w:0.235, h:0.305, patch:{dx:-0.26, dy: 0.03}, dh:112 },
+  ocean:  { x:0.310, y:0.380, w:0.285, h:0.295, patch:{dx:-0.29, dy: 0.02}, dh:118 },
+  desert: { x:0.285, y:0.395, w:0.330, h:0.345, patch:{dx:-0.27, dy: 0.05}, dh:126 },
+  ice:    { x:0.285, y:0.380, w:0.330, h:0.340, patch:{dx:-0.27, dy: 0.04}, dh:126 },
+  forest: { x:0.415, y:0.380, w:0.205, h:0.225, patch:{dx: 0.32, dy: 0.02}, dh:100 },
+};
+let heroSpr=null, patchSpr=null, heroAspect=1, heroDH=110;
+// garden sprite for the intro "swept away by the tornado" animation
+let gardenSpr=null, gardenPatch=null, gardenAspect=1;
+
+// Crop a region of img into an offscreen canvas with a soft elliptical
+// feathered edge, so the cut-out blends into the scene instead of looking
+// like a rectangular sticker.
+function maskCrop(img, sx, sy, sw, sh) {
+  const c=document.createElement('canvas');
+  c.width=Math.round(sw); c.height=Math.round(sh);
+  const g=c.getContext('2d');
+  g.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  g.globalCompositeOperation='destination-in';
+  g.translate(c.width/2, c.height/2);
+  g.scale(1, c.height/c.width);          // make the radial gradient elliptical
+  const rg=g.createRadialGradient(0,0,0, 0,0,c.width/2);
+  rg.addColorStop(0,'rgba(0,0,0,1)');
+  rg.addColorStop(0.68,'rgba(0,0,0,1)');
+  rg.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=rg;
+  g.fillRect(-c.width/2, -c.width/2, c.width, c.width);
+  return c;
+}
+
+function buildHero(cfg) {
+  heroSpr=null; patchSpr=null;
+  const img=IMG[cfg.bg], R=HERO_RECT[cfg.bg];
+  if(!img || !img.naturalWidth || !R) return;
+  const iw=img.naturalWidth, ih=img.naturalHeight;
+  const sw=R.w*iw, sh=R.h*ih;
+  heroSpr  = maskCrop(img, R.x*iw, R.y*ih, sw, sh);
+  patchSpr = maskCrop(img, (R.x+R.patch.dx)*iw, (R.y+R.patch.dy)*ih, sw, sh);
+  heroAspect = sw/sh;
+  heroDH = R.dh;
+}
+
+// Cover the heroine's original printed position with nearby texture so she
+// doesn't appear twice (once frozen in the photo + once as the sprite).
+function drawHeroPatch() {
+  const img=IMG[LEVELS[lvIdx].bg], R=HERO_RECT[LEVELS[lvIdx].bg];
+  if(!patchSpr || !img || !img.naturalWidth || !R) return;
+  const iw=img.naturalWidth, ih=img.naturalHeight;
+  const sc=Math.max(W/iw, H/ih);
+  const ox=(W-iw*sc)/2, oy=(H-ih*sc)/2;
+  const dx=ox+R.x*iw*sc, dy=oy+R.y*ih*sc, dw=R.w*iw*sc, dh=R.h*ih*sc;
+  // draw slightly enlarged, twice, so the feathered edges fully cover her
+  cx.drawImage(patchSpr, dx-dw*0.05, dy-dh*0.05, dw*1.1, dh*1.1);
+  cx.drawImage(patchSpr, dx-dw*0.02, dy-dh*0.02, dw*1.04, dh*1.04);
+}
+
 // Level objects
 let orbs = [], obstacles = [], ptcs = [];
 let collected = 0, goalOpen = false, lvDone = false, hitFlash = 0, lives = 6;
 
-// ── Tap handler ───────────────────────────────────────────────────────────────
-function tap() {
-  if(scene==='intro' && introPhase===0) { introPhase=1; introT=0; }
-  if(scene==='win' && winT > 80) { resetGame(); }
+// ── Saved progress (localStorage) ──────────────────────────────────────────────
+const SAVE_KEY='chacha_progress';
+function loadProgress(){ const v=parseInt(localStorage.getItem(SAVE_KEY)||'0',10); return (v>0&&v<LEVELS.length)?v:0; }
+function saveProgress(i){ try{ localStorage.setItem(SAVE_KEY,String(Math.max(i,loadProgress()))); }catch(e){} }
+function clearProgress(){ try{ localStorage.removeItem(SAVE_KEY); }catch(e){} }
+
+// ── Tap handler (coordinate-aware, for the continue / restart choice) ─────────
+function tap(tx=W/2, ty=H/2) {
+  ac();                                     // unlock audio on first gesture
+  if(scene==='intro' && introPhase===0) {
+    const saved=loadProgress();
+    if(saved>0 && ty>H/2+72 && ty<H/2+112) {  // "重新开始" zone
+      clearProgress();
+      introPhase=1; introT=0; sfx.start();
+    } else if(saved>0) {                       // continue where she left off
+      sfx.goal();
+      scene='trans'; transT=0; lvIdx=saved-1;
+    } else {
+      introPhase=1; introT=0; sfx.start();     // fresh adventure → tornado
+    }
+  }
+  else if(scene==='win' && winT > 80) { resetGame(); }
 }
 
 function resetGame() {
@@ -169,6 +298,8 @@ function startLevel(i) {
   lvIdx = i;
   const cfg = LEVELS[i];
   PL.x=W/2; PL.y=H-130; PL.inv=0; PL.dir=1;
+  buildHero(cfg);                     // cut the heroine out of this level's photo
+  saveProgress(i);                    // remember how far she has come
   orbs=[]; obstacles=[]; ptcs=[];
   collected=0; goalOpen=false; lvDone=false; hitFlash=0; lives=6;
 
@@ -176,7 +307,8 @@ function startLevel(i) {
   for(let j=0; j<orbN; j++)
     orbs.push({ x:55+Math.random()*(W-110), y:140+Math.random()*(H-300), r:16, alive:true, phase:Math.random()*Math.PI*2 });
 
-  const rspd = () => (Math.random()*1.6+0.7)*(Math.random()<0.5?1:-1);
+  const diff = 1 + i*0.15;            // later levels move faster
+  const rspd = () => (Math.random()*1.6+0.7)*diff*(Math.random()<0.5?1:-1);
   for(let j=0; j<cfg.obsCount; j++) {
     let ox, oy;
     do { ox=50+Math.random()*(W-100); oy=90+Math.random()*(H-220); }
@@ -207,6 +339,14 @@ let booted = false;
 function boot() {
   if(booted) return;            // guard: only boot once
   booted = true;
+  // cut 茶茶 out of the garden photo for the tornado lift-off animation
+  const g=IMG.garden, R=HERO_RECT.garden;
+  if(g && g.naturalWidth) {
+    const iw=g.naturalWidth, ih=g.naturalHeight, sw=R.w*iw, sh=R.h*ih;
+    gardenSpr   = maskCrop(g, R.x*iw, R.y*ih, sw, sh);
+    gardenPatch = maskCrop(g, (R.x+R.patch.dx)*iw, (R.y+R.patch.dy)*ih, sw, sh);
+    gardenAspect = sw/sh;
+  }
   scene='intro'; introPhase=0; introT=0;
   // NOTE: render loop is already running (started at bottom of script);
   // do NOT start a second requestAnimationFrame here.
@@ -238,9 +378,32 @@ function starPath(cx2, cx_, cy, spikes, ro, ri) {
 }
 
 // ── Draw player ───────────────────────────────────────────────────────────────
+// The heroine cut straight out of the level photo, riding her mount, bobbing
+// as she moves. Falls back to the hand-drawn girl if the crop isn't ready.
 function drawPlayer() {
-  const {x,y,w,h,inv,dir} = PL;
+  const {x,y,inv,dir} = PL;
   if(inv>0 && Math.floor(inv/5)%2===1) return;
+  if(!heroSpr) { drawVectorPlayer(); return; }
+
+  const dh=heroDH, dw=dh*heroAspect;
+  const moving = K.up||K.down||K.left||K.right;
+  const bob  = moving ? Math.sin(tick*0.25)*3.5 : Math.sin(tick*0.07)*1.5;
+  const tilt = (K.left?-1:K.right?1:0)*0.055;
+
+  // ground shadow
+  cx.fillStyle='rgba(0,0,0,0.25)';
+  cx.beginPath(); cx.ellipse(x, y+dh*0.44, dw*0.30, 8, 0, 0, Math.PI*2); cx.fill();
+
+  cx.save();
+  cx.translate(x, y+bob);
+  cx.rotate(tilt);
+  if(dir===1) cx.scale(-1,1);   // source photos face left; flip when heading right
+  cx.drawImage(heroSpr, -dw/2, -dh*0.52, dw, dh);
+  cx.restore();
+}
+
+function drawVectorPlayer() {
+  const {x,y,w,h,inv,dir} = PL;
 
   cx.save();
   cx.scale(dir,1);
@@ -805,16 +968,33 @@ function drawIntro() {
     cx.font='15px sans-serif';
     cx.fillText('茶茶在花园浇花，突然一阵龙卷风…', W/2, H/2+2);
 
-    // Blinking prompt
+    // Blinking prompt — continue or fresh start
+    const saved=loadProgress();
     if(Math.floor(introT/28)%2===0) {
       cx.fillStyle='rgba(255,220,100,0.9)';
       cx.font='bold 16px sans-serif';
-      cx.fillText('▶ 点击开始冒险 ◀', W/2, H/2+50);
+      cx.fillText(saved>0 ? `▶ 继续冒险（第 ${saved+1} 关）◀` : '▶ 点击开始冒险 ◀', W/2, H/2+50);
+    }
+    if(saved>0) {
+      cx.fillStyle='rgba(255,255,255,0.65)';
+      cx.font='13px sans-serif';
+      cx.fillText('从头开始 ↻', W/2, H/2+92);
     }
     cx.restore();
   } else {
-    // Tornado animation
+    // Tornado animation — 茶茶 (cut from the photo) gets swept into the sky!
     const t = introT;
+
+    // hide her printed spot in the garden while she flies
+    if(gardenPatch) {
+      const img=IMG.garden, R=HERO_RECT.garden;
+      const iw=img.naturalWidth, ih=img.naturalHeight;
+      const sc=Math.max(W/iw,H/ih), ox=(W-iw*sc)/2, oy=(H-ih*sc)/2;
+      const dx=ox+R.x*iw*sc, dy=oy+R.y*ih*sc, dw=R.w*iw*sc, dh=R.h*ih*sc;
+      cx.drawImage(gardenPatch, dx-dw*0.05, dy-dh*0.05, dw*1.1, dh*1.1);
+      cx.drawImage(gardenPatch, dx-dw*0.02, dy-dh*0.02, dw*1.04, dh*1.04);
+    }
+
     cx.save();
     cx.translate(W/2, H/2);
     cx.rotate(t*0.18);
@@ -835,6 +1015,24 @@ function drawIntro() {
     gc.addColorStop(1,'rgba(100,80,200,0)');
     cx.fillStyle=gc; cx.beginPath(); cx.arc(0,0,60,0,Math.PI*2); cx.fill();
     cx.restore();
+
+    // 茶茶 herself spiraling up, spinning and shrinking into the sky
+    if(gardenSpr) {
+      const p = Math.min(t/100, 1);                        // 0→1 progress
+      const ease = p*p*(3-2*p);
+      const spiralR = 20+ease*110;
+      const ang = t*0.12;
+      const hx = W/2 + Math.cos(ang)*spiralR*(1-ease*0.4);
+      const hy = H*0.62 - ease*(H*0.72) + Math.sin(ang)*spiralR*0.35;
+      const sh = 190*(1-ease*0.75);                        // shrink as she rises
+      const sw = sh*gardenAspect;
+      cx.save();
+      cx.translate(hx,hy);
+      cx.rotate(Math.sin(t*0.2)*0.5*ease + ease*ang*0.3);
+      cx.globalAlpha = 1-Math.max(0,(p-0.9))*10;           // fade at the very top
+      cx.drawImage(gardenSpr, -sw/2, -sh/2, sw, sh);
+      cx.restore();
+    }
 
     cx.fillStyle='rgba(0,0,0,0.45)';
     cx.fillRect(0,H*0.78,W,H*0.22);
@@ -876,13 +1074,23 @@ function updateLevel() {
   tick++;
   if(lvDone) return;
 
-  // Move player
+  // Move player — arrow keys / D-pad, or drag a finger right on the scene
   const spd = PL.spd;
   let moved = false;
   if(K.up)    { PL.y = Math.max(58, PL.y-spd); moved=true; }
   if(K.down)  { PL.y = Math.min(H-35,PL.y+spd); moved=true; }
   if(K.left)  { PL.x = Math.max(22, PL.x-spd); PL.dir=-1; moved=true; }
   if(K.right) { PL.x = Math.min(W-22,PL.x+spd); PL.dir=1;  moved=true; }
+  if(!moved && DRAG.on) {
+    const ddx=DRAG.x-PL.x, ddy=DRAG.y-PL.y, dist=Math.hypot(ddx,ddy);
+    if(dist>6) {
+      const step=Math.min(spd,dist);
+      PL.x=Math.max(22,Math.min(W-22, PL.x+ddx/dist*step));
+      PL.y=Math.max(58,Math.min(H-35, PL.y+ddy/dist*step));
+      if(Math.abs(ddx)>2) PL.dir = ddx>0?1:-1;
+      moved=true;
+    }
+  }
   if(PL.inv>0) PL.inv--;
 
   // Move obstacles
@@ -898,8 +1106,11 @@ function updateLevel() {
         lives--;
         spawnOrbPtcs(PL.x, PL.y); // reuse particle burst for hit feedback
         if(lives<=0) {
+          sfx.die();
           lvDone=true;
           setTimeout(()=>{ startLevel(lvIdx); }, 1200);
+        } else {
+          sfx.hurt();
         }
       }
     }
@@ -912,13 +1123,16 @@ function updateLevel() {
     if(Math.hypot(orb.x-PL.x, orb.y-PL.y) < orb.r+22){
       orb.alive=false; collected++;
       spawnOrbPtcs(orb.x,orb.y);
-      if(collected>=LEVELS[lvIdx].need) goalOpen=true;
+      if(collected>=LEVELS[lvIdx].need) { goalOpen=true; sfx.goal(); }
+      else sfx.collect();
     }
   }
 
   // Reach goal
   if(goalOpen && Math.hypot(W/2-PL.x, 72-PL.y)<46){
     lvDone=true;
+    if(lvIdx+1 < LEVELS.length) { sfx.clear(); saveProgress(lvIdx+1); }
+    else { sfx.win(); clearProgress(); }   // finished the whole journey!
     setTimeout(()=>{
       if(lvIdx+1 < LEVELS.length) { scene='trans'; transT=0; }
       else { scene='win'; winT=0; }
@@ -929,6 +1143,7 @@ function updateLevel() {
 function drawLevel() {
   const cfg = LEVELS[lvIdx];
   drawBg(cfg.bg);
+  drawHeroPatch();   // hide the heroine printed in the photo — the sprite IS her now
   drawAmbient(tick);
 
   // Hit flash
