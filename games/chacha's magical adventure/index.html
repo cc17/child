@@ -37,6 +37,12 @@ canvas { display:block; border-radius:16px; box-shadow:0 0 50px rgba(120,80,255,
   border-color:rgba(255,255,255,0.6);
 }
 .btn-empty { background:transparent; border:none; pointer-events:none; }
+#bA {
+  background:radial-gradient(circle at 35% 30%, rgba(255,120,90,0.55), rgba(200,30,30,0.35));
+  border-color:rgba(255,160,120,0.55);
+  font-size:24px;
+}
+#bA:active, #bA.on { background:radial-gradient(circle at 35% 30%, rgba(255,160,120,0.8), rgba(230,60,40,0.6)); }
 </style>
 </head>
 <body>
@@ -47,7 +53,7 @@ canvas { display:block; border-radius:16px; box-shadow:0 0 50px rgba(120,80,255,
     <button class="btn" id="bU">▲</button>
     <div class="btn-empty"></div>
     <button class="btn" id="bL">◀</button>
-    <div class="btn-empty"></div>
+    <button class="btn" id="bA">⚔️</button>
     <button class="btn" id="bR">▶</button>
     <div class="btn-empty"></div>
     <button class="btn" id="bD">▼</button>
@@ -101,7 +107,8 @@ document.addEventListener('keydown', e => {
   if(['ArrowDown','s','S'].includes(e.key))  K.down=true;
   if(['ArrowLeft','a','A'].includes(e.key))  K.left=true;
   if(['ArrowRight','d','D'].includes(e.key)) K.right=true;
-  if([' ','Enter'].includes(e.key)) tap();
+  if(e.key==='Enter') tap();
+  if([' ','j','J','k','K'].includes(e.key)) { if(scene==='level') doAttack(); else tap(); }
 });
 document.addEventListener('keyup', e => {
   if(['ArrowUp','w','W'].includes(e.key))    K.up=false;
@@ -135,6 +142,11 @@ function bindBtn(id, dir) {
     el.addEventListener(ev, () => { K[dir]=false; el.classList.remove('on'); }));
 }
 bindBtn('bU','up'); bindBtn('bD','down'); bindBtn('bL','left'); bindBtn('bR','right');
+{
+  const bA=document.getElementById('bA');
+  bA.addEventListener('pointerdown', e => { e.preventDefault(); if(scene==='level') doAttack(); bA.classList.add('on'); });
+  ['pointerup','pointerleave','pointercancel'].forEach(ev => bA.addEventListener(ev, ()=>bA.classList.remove('on')));
+}
 
 // ── Sound effects (WebAudio, fully synthesized — no audio files) ───────────────
 let AC=null;
@@ -165,26 +177,58 @@ const sfx = {
   fall(){ tone(900,.7,'sine',.2,0,-750); },                                        // whoosh down
   start(){ tone(300,.5,'sawtooth',.15,0,500); tone(150,.6,'triangle',.12,.05,300); }, // tornado rise
   die(){ [392,330,262,196].forEach((f,i)=>tone(f,.22,'triangle',.2,i*.12)); },     // sad descend
+  attack(){ tone(1400,.08,'square',.10,0,-800); tone(700,.10,'sine',.12,.01,-200); }, // magic swish
+  hitm(){ tone(260,.09,'square',.18,0,-80); },                                     // monster hit
+  mdie(){ tone(500,.12,'triangle',.2,0,-300); tone(760,.18,'sine',.14,.05,-400); },// monster defeated
 };
 
 // ── Level configs ─────────────────────────────────────────────────────────────
 const LEVELS = [
-  { name:'云朵跑道', bg:'cloud',  need:6, obsCount:6, obsType:'wand',
-    transMsg:'龙卷风把茶茶卷上了天！\n踩上星光云道，躲开旋转魔法棒！',
+  { name:'云朵跑道', bg:'cloud',  need:6, obsCount:6, obsType:'wand',  hY:300,
+    transMsg:'龙卷风把茶茶卷上了天！\n往云道深处走，⚔️打怪收集能量球！',
     clearMsg:'茶茶踏过云端，一脚踩空…\n哗啦一声掉进了大海里！' },
-  { name:'深海冒险', bg:'ocean',  need:6, obsCount:6, obsType:'jelly',
-    transMsg:'茶茶骑上海马，在深海里冒险！\n小心水母，收集珍珠！',
+  { name:'深海冒险', bg:'ocean',  need:6, obsCount:6, obsType:'jelly', hY:250,
+    transMsg:'茶茶骑上海马，在深海里冒险！\n击退水母，收集珍珠！',
     clearMsg:'茶茶游上了岸，眼前是滚烫的大沙漠！' },
-  { name:'沙漠旅途', bg:'desert', need:6, obsCount:8, obsType:'cactus',
-    transMsg:'茶茶骑上骆驼穿越大沙漠！\n绕开仙人掌和神秘旅人！',
+  { name:'沙漠旅途', bg:'desert', need:6, obsCount:8, obsType:'cactus', hY:230,
+    transMsg:'茶茶骑上骆驼穿越大沙漠！\n打败沙漠旅人，穿过仙人掌阵！',
     clearMsg:'穿过沙漠！远处传来冰雪的寒意……' },
-  { name:'冰雪王国', bg:'ice',    need:6, obsCount:8, obsType:'snowman',
-    transMsg:'茶茶骑着白鹿进入冰雪王国！\n雪人和冰刺挡住了去路！',
+  { name:'冰雪王国', bg:'ice',    need:6, obsCount:8, obsType:'snowman', hY:245,
+    transMsg:'茶茶骑着白鹿进入冰雪王国！\n击碎雪人和冰刺，杀出一条路！',
     clearMsg:'冰雪消融，前方是神秘的魔法森林！' },
-  { name:'魔法森林', bg:'forest', need:7, obsCount:9, obsType:'tiger',
-    transMsg:'最后一关！茶茶进入魔法森林！\n老虎和毒蘑菇挡住了去路！',
+  { name:'魔法森林', bg:'forest', need:7, obsCount:9, obsType:'tiger', hY:255,
+    transMsg:'最后一关！茶茶进入魔法森林！\n战胜老虎，走向回家的花拱门！',
     clearMsg:'' },
 ];
+
+// ── Pseudo-3D projection ───────────────────────────────────────────────────────
+// World space: u ∈ [-1,1] across the road, z ∈ [0,1] into the scene (0 = near
+// camera, 1 = the portal in the photo). The photos already have true vanishing
+// perspective, so projecting sprites onto that ground plane reads as real 3D.
+const PK=3.2;                                    // perspective strength
+const pOf   = z => 1/(1+PK*z);
+const P1    = pOf(1);
+const pNorm = z => (pOf(z)-P1)/(1-P1);           // 1 near → 0 at portal
+function proj(u, z) {
+  const hY=LEVELS[lvIdx].hY, nY=H-70;
+  const pn=pNorm(z);
+  const half = 52 + (198-52)*pn;                 // road half-width in px
+  return {
+    x: W/2 + u*half,
+    y: hY + (nY-hY)*pn,
+    s: 0.24 + 0.80*pn,                           // sprite scale at this depth
+    pn, half
+  };
+}
+function unproj(sxx, syy) {                       // screen → world (for drag)
+  const hY=LEVELS[lvIdx].hY, nY=H-70;
+  const pn=Math.max(0, Math.min(1, (syy-hY)/(nY-hY)));
+  const p = P1+(1-P1)*pn;
+  const z = Math.max(0.02, Math.min(0.97, (1/p-1)/PK));
+  const half = 52 + (198-52)*pn;
+  const u = Math.max(-1, Math.min(1, (sxx-W/2)/half));
+  return {u, z};
+}
 
 // ── Game state ────────────────────────────────────────────────────────────────
 let scene = 'loading'; // loading | intro | trans | level | win
@@ -195,8 +239,9 @@ let introT = 0;
 let transT = 0;
 let winT = 0;
 
-// Player
-const PL = { x:0, y:0, w:34, h:46, spd:3.8, inv:0, dir:1 };
+// Player — lives in world (u,z) space; x/y are the projected screen coords
+const PL = { u:0, z:0.08, x:0, y:0, w:34, h:46, spd:3.8, inv:0, dir:1, atkCd:0 };
+let monsters = [], shots = [];
 
 // ── Photo-hero sprites ─────────────────────────────────────────────────────────
 // Each level's heroine (with her mount) is CUT OUT of the level photo itself and
@@ -297,41 +342,52 @@ function resetGame() {
 function startLevel(i) {
   lvIdx = i;
   const cfg = LEVELS[i];
-  PL.x=W/2; PL.y=H-130; PL.inv=0; PL.dir=1;
+  PL.u=0; PL.z=0.08; PL.inv=0; PL.dir=1; PL.atkCd=0;
   buildHero(cfg);                     // cut the heroine out of this level's photo
   saveProgress(i);                    // remember how far she has come
-  orbs=[]; obstacles=[]; ptcs=[];
+  orbs=[]; obstacles=[]; monsters=[]; shots=[]; ptcs=[];
   collected=0; goalOpen=false; lvDone=false; hitFlash=0; lives=6;
 
+  // Energy orbs scattered along the 3D road
   const orbN = cfg.need + Math.floor(Math.random()*3) + 2;
   for(let j=0; j<orbN; j++)
-    orbs.push({ x:55+Math.random()*(W-110), y:140+Math.random()*(H-300), r:16, alive:true, phase:Math.random()*Math.PI*2 });
+    orbs.push({ u:-0.85+Math.random()*1.7, z:0.12+Math.random()*0.72,
+                r:16, alive:true, phase:Math.random()*Math.PI*2 });
 
-  const diff = 1 + i*0.15;            // later levels move faster
-  const rspd = () => (Math.random()*1.6+0.7)*diff*(Math.random()<0.5?1:-1);
+  // Monsters guard the road — mobile ones chase, static ones block
+  const diff = 1 + i*0.12;            // later levels: faster monsters
+  const mobileOf = { wand:'wand', jelly:'jelly', cactus:'person', snowman:'snowman', tiger:'tiger' };
+  const staticOf = { wand:null,   jelly:null,    cactus:'cactus', snowman:'spike',   tiger:'mushroom' };
   for(let j=0; j<cfg.obsCount; j++) {
-    let ox, oy;
-    do { ox=50+Math.random()*(W-100); oy=90+Math.random()*(H-220); }
-    while(Math.hypot(ox-PL.x, oy-PL.y)<120);
-
-    let vx=0, vy=0, variant='';
-    if(cfg.obsType==='wand') {
-      vx=rspd()*1.2; vy=rspd()*0.9; variant='wand';
-    } else if(cfg.obsType==='jelly') {
-      vx=rspd()*0.45; vy=(Math.random()*0.8+0.3)*(Math.random()<0.5?1:-1); variant='jelly';
-    } else if(cfg.obsType==='cactus') {
-      if(j%5<3){ variant='cactus'; vx=0; vy=0; }
-      else     { variant='person'; vx=rspd()*0.7; vy=0; }
-    } else if(cfg.obsType==='snowman') {
-      if(j%2===0){ variant='snowman'; vx=rspd()*0.6; vy=rspd()*0.6; }
-      else       { variant='spike';   vx=0; vy=0; }
-    } else if(cfg.obsType==='tiger') {
-      if(j%5<3){ variant='tiger';    vx=rspd()*1.9; vy=rspd()*1.5; }
-      else     { variant='mushroom'; vx=0; vy=0; }
-    }
-    obstacles.push({ x:ox, y:oy, vx, vy, variant });
+    const stat = staticOf[cfg.obsType] && (j%5>=3);
+    const variant = stat ? staticOf[cfg.obsType] : mobileOf[cfg.obsType];
+    let mu, mz;
+    do { mu=-0.8+Math.random()*1.6; mz=0.18+Math.random()*0.65; }
+    while(Math.hypot(mu-PL.u, (mz-PL.z)*3) < 0.5);
+    monsters.push({
+      u:mu, z:mz, variant,
+      hp: stat?2:3, maxHp: stat?2:3,
+      spd:(0.0012+Math.random()*0.0014)*diff,
+      mobile:!stat, wob:Math.random()*Math.PI*2,
+      flash:0, alive:true,
+    });
   }
   scene='level';
+}
+
+// ── Attack: 茶茶 fires a magic star forward ─────────────────────────────────────
+function doAttack() {
+  if(scene!=='level' || lvDone || PL.atkCd>0) return;
+  PL.atkCd=18;                                   // ~0.3s cooldown
+  sfx.attack();
+  // aim at the nearest living monster ahead-ish, else straight forward
+  let best=null, bd=1e9;
+  for(const m of monsters){
+    if(!m.alive) continue;
+    const d=Math.hypot((m.u-PL.u)*1.4, (m.z-PL.z)*4);
+    if(d<bd){ bd=d; best=m; }
+  }
+  shots.push({ u:PL.u, z:PL.z+0.03, target:best, life:70 });
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -385,14 +441,15 @@ function drawPlayer() {
   if(inv>0 && Math.floor(inv/5)%2===1) return;
   if(!heroSpr) { drawVectorPlayer(); return; }
 
-  const dh=heroDH, dw=dh*heroAspect;
-  const moving = K.up||K.down||K.left||K.right;
-  const bob  = moving ? Math.sin(tick*0.25)*3.5 : Math.sin(tick*0.07)*1.5;
+  const depth = proj(PL.u, PL.z).s;              // near = big, far = small
+  const dh=heroDH*depth, dw=dh*heroAspect;
+  const moving = K.up||K.down||K.left||K.right||DRAG.on;
+  const bob  = (moving ? Math.sin(tick*0.25)*3.5 : Math.sin(tick*0.07)*1.5)*depth;
   const tilt = (K.left?-1:K.right?1:0)*0.055;
 
   // ground shadow
   cx.fillStyle='rgba(0,0,0,0.25)';
-  cx.beginPath(); cx.ellipse(x, y+dh*0.44, dw*0.30, 8, 0, 0, Math.PI*2); cx.fill();
+  cx.beginPath(); cx.ellipse(x, y+dh*0.44, dw*0.30, 8*depth, 0, 0, Math.PI*2); cx.fill();
 
   cx.save();
   cx.translate(x, y+bob);
@@ -481,9 +538,10 @@ function drawVectorPlayer() {
   cx.restore();
 }
 
-// ── Draw obstacle ─────────────────────────────────────────────────────────────
-function drawObs(o, t) {
-  cx.save(); cx.translate(o.x, o.y);
+// ── Draw a monster at projected screen pos, scaled by depth ────────────────────
+function drawObs(o, t, sx, sy, s) {
+  cx.save(); cx.translate(sx, sy); cx.scale(s*1.25, s*1.25);
+  if(o.flash>0) { cx.filter='brightness(2.2)'; }   // white flash when hit
   switch(o.variant) {
     case 'wand': {
       cx.rotate(t*0.07);
@@ -660,13 +718,13 @@ function drawCollectBeacon(r) {
   cx.shadowBlur=0;
 }
 
-// ── Draw orb (level-specific collectibles) ────────────────────────────────────
-function drawOrb(o) {
+// ── Draw orb at projected screen pos, scaled by depth ─────────────────────────
+function drawOrb(o, sx, sy, s) {
   if(!o.alive) return;
   const pulse=Math.sin(tick*0.055+o.phase)*0.18;
   const r=o.r*(1+pulse);
   const bob=Math.sin(tick*0.08+o.phase)*3;         // gentle float to catch the eye
-  cx.save(); cx.translate(o.x,o.y+bob);
+  cx.save(); cx.translate(sx, sy+bob*s); cx.scale(s,s);
   drawCollectBeacon(r);                             // beacon first, behind the gem
   switch(lvIdx) {
     case 0: { // Cloud - Rainbow spinning star gem
@@ -730,10 +788,10 @@ function drawOrb(o) {
   cx.restore();
 }
 
-// ── Draw goal (level-specific portals) ────────────────────────────────────────
+// ── Draw goal — glows right on the photo's own portal at the end of the road ──
 function drawGoal() {
-  const gx=W/2, gy=72;
-  cx.save(); cx.translate(gx,gy);
+  const gx=W/2, gy=LEVELS[lvIdx].hY-58;
+  cx.save(); cx.translate(gx,gy); cx.scale(0.88,0.88);
   if(!goalOpen) {
     cx.fillStyle='rgba(0,0,0,0.4)'; cx.beginPath(); roundRect2(cx,-44,-32,88,62,12); cx.fill();
     cx.strokeStyle='rgba(255,255,255,0.35)'; cx.lineWidth=1.5; cx.beginPath(); roundRect2(cx,-44,-32,88,62,12); cx.stroke();
@@ -1074,62 +1132,98 @@ function updateLevel() {
   tick++;
   if(lvDone) return;
 
-  // Move player — arrow keys / D-pad, or drag a finger right on the scene
-  const spd = PL.spd;
-  let moved = false;
-  if(K.up)    { PL.y = Math.max(58, PL.y-spd); moved=true; }
-  if(K.down)  { PL.y = Math.min(H-35,PL.y+spd); moved=true; }
-  if(K.left)  { PL.x = Math.max(22, PL.x-spd); PL.dir=-1; moved=true; }
-  if(K.right) { PL.x = Math.min(W-22,PL.x+spd); PL.dir=1;  moved=true; }
+  // ── Move 茶茶 through the 3D scene: ▲ walks INTO the photo, ▼ back out ──────
+  const uSpd=0.022, zSpd=0.0085;
+  let moved=false;
+  if(K.up)    { PL.z=Math.min(0.97, PL.z+zSpd); moved=true; }
+  if(K.down)  { PL.z=Math.max(0.02, PL.z-zSpd); moved=true; }
+  if(K.left)  { PL.u=Math.max(-1, PL.u-uSpd); PL.dir=-1; moved=true; }
+  if(K.right) { PL.u=Math.min( 1, PL.u+uSpd); PL.dir=1;  moved=true; }
   if(!moved && DRAG.on) {
-    const ddx=DRAG.x-PL.x, ddy=DRAG.y-PL.y, dist=Math.hypot(ddx,ddy);
-    if(dist>6) {
-      const step=Math.min(spd,dist);
-      PL.x=Math.max(22,Math.min(W-22, PL.x+ddx/dist*step));
-      PL.y=Math.max(58,Math.min(H-35, PL.y+ddy/dist*step));
-      if(Math.abs(ddx)>2) PL.dir = ddx>0?1:-1;
+    const t=unproj(DRAG.x, DRAG.y);
+    const du=t.u-PL.u, dz=t.z-PL.z, d=Math.hypot(du,dz*3);
+    if(d>0.03){
+      PL.u+=du/d*uSpd*0.9; PL.z+=dz/d*zSpd*2.4;
+      PL.u=Math.max(-1,Math.min(1,PL.u)); PL.z=Math.max(0.02,Math.min(0.97,PL.z));
+      if(Math.abs(du)>0.02) PL.dir=du>0?1:-1;
       moved=true;
     }
   }
   if(PL.inv>0) PL.inv--;
+  if(PL.atkCd>0) PL.atkCd--;
+  const pp=proj(PL.u,PL.z); PL.x=pp.x; PL.y=pp.y;   // projected screen pos
 
-  // Move obstacles
-  for(const o of obstacles){
-    o.x+=o.vx; o.y+=o.vy;
-    if(o.x<28||o.x>W-28) o.vx*=-1;
-    if(o.y<65||o.y>H-40)  o.vy*=-1;
-
-    // Collision
-    if(PL.inv===0) {
-      if(Math.abs(o.x-PL.x)<30 && Math.abs(o.y-PL.y)<28) {
-        PL.inv=90; hitFlash=18;
-        lives--;
-        spawnOrbPtcs(PL.x, PL.y); // reuse particle burst for hit feedback
-        if(lives<=0) {
-          sfx.die();
-          lvDone=true;
-          setTimeout(()=>{ startLevel(lvIdx); }, 1200);
-        } else {
-          sfx.hurt();
-        }
+  // ── Monster AI: mobile ones chase when 茶茶 gets close ───────────────────────
+  for(const m of monsters){
+    if(!m.alive) continue;
+    if(m.flash>0) m.flash--;
+    if(m.mobile){
+      m.wob+=0.05;
+      const du=PL.u-m.u, dz=PL.z-m.z;
+      const d=Math.hypot(du, dz*3);
+      if(d<0.55){                        // aggro: chase her!
+        m.u+=du/(d||1)*m.spd*14;
+        m.z+=dz/(d||1)*m.spd*5;
+      } else {                           // patrol side to side
+        m.u+=Math.sin(m.wob)*m.spd*8;
+      }
+      m.u=Math.max(-0.95,Math.min(0.95,m.u));
+      m.z=Math.max(0.10,Math.min(0.90,m.z));
+    }
+    // contact damage (screen-space, scaled by depth)
+    if(PL.inv===0){
+      const mp=proj(m.u,m.z);
+      if(Math.abs(mp.x-PL.x)<38*mp.s+14 && Math.abs(mp.y-PL.y)<30*mp.s+12){
+        PL.inv=90; hitFlash=18; lives--;
+        spawnOrbPtcs(PL.x,PL.y);
+        if(lives<=0){ sfx.die(); lvDone=true; setTimeout(()=>{ startLevel(lvIdx); },1200); }
+        else sfx.hurt();
       }
     }
   }
   if(hitFlash>0) hitFlash--;
 
-  // Collect orbs
+  // ── Magic star shots fly into the scene and strike monsters ────────────────
+  for(const s of shots){
+    if(s.life<=0) continue;
+    s.life--;
+    if(s.target && s.target.alive){                    // gentle homing
+      s.u += (s.target.u-s.u)*0.16;
+      s.z += Math.sign(s.target.z-s.z)*0.028;
+      if(Math.abs(s.target.z-s.z)<0.03) s.z=s.target.z;
+    } else s.z += 0.03;
+    if(s.z>0.97) s.life=0;
+    for(const m of monsters){
+      if(!m.alive) continue;
+      if(Math.hypot(m.u-s.u,(m.z-s.z)*3.4)<0.11){
+        s.life=0; m.hp--; m.flash=8;
+        const mp=proj(m.u,m.z);
+        if(m.hp<=0){
+          m.alive=false; sfx.mdie();
+          spawnOrbPtcs(mp.x,mp.y-20);
+          // defeated monsters drop an energy orb!
+          orbs.push({ u:m.u, z:m.z, r:16, alive:true, phase:Math.random()*Math.PI*2 });
+        } else sfx.hitm();
+        break;
+      }
+    }
+  }
+  shots=shots.filter(s=>s.life>0);
+
+  // ── Collect orbs (world-space distance) ─────────────────────────────────────
   for(const orb of orbs){
     if(!orb.alive) continue;
-    if(Math.hypot(orb.x-PL.x, orb.y-PL.y) < orb.r+22){
+    if(Math.hypot(orb.u-PL.u,(orb.z-PL.z)*3.4)<0.15){
       orb.alive=false; collected++;
-      spawnOrbPtcs(orb.x,orb.y);
-      if(collected>=LEVELS[lvIdx].need) { goalOpen=true; sfx.goal(); }
+      const op=proj(orb.u,orb.z);
+      spawnOrbPtcs(op.x,op.y);
+      if(collected>=LEVELS[lvIdx].need && !goalOpen){ goalOpen=true; sfx.goal(); }
       else sfx.collect();
     }
   }
 
-  // Reach goal
-  if(goalOpen && Math.hypot(W/2-PL.x, 72-PL.y)<46){
+  // ── Walk into the glowing portal at the end of the road ────────────────────
+  if(goalOpen && PL.z>0.88 && Math.abs(PL.u)<0.5){
     lvDone=true;
     if(lvIdx+1 < LEVELS.length) { sfx.clear(); saveProgress(lvIdx+1); }
     else { sfx.win(); clearProgress(); }   // finished the whole journey!
@@ -1150,9 +1244,39 @@ function drawLevel() {
   if(hitFlash>0){ cx.fillStyle=`rgba(255,0,0,${hitFlash*0.028})`; cx.fillRect(0,0,W,H); }
 
   drawGoal();
-  for(const o of orbs) drawOrb(o);
-  for(const o of obstacles) drawObs(o, tick);
-  drawPlayer();
+
+  // ── Depth-sorted 3D render pass: far things first, near things on top ───────
+  const rl=[];
+  for(const o of orbs) if(o.alive){ const p=proj(o.u,o.z); rl.push({z:o.z, f:()=>drawOrb(o,p.x,p.y,p.s)}); }
+  for(const m of monsters) if(m.alive){
+    const p=proj(m.u,m.z);
+    rl.push({z:m.z, f:()=>{
+      // ground shadow
+      cx.fillStyle='rgba(0,0,0,0.22)';
+      cx.beginPath(); cx.ellipse(p.x,p.y+30*p.s,30*p.s,7*p.s,0,0,Math.PI*2); cx.fill();
+      drawObs(m, tick, p.x, p.y, p.s);
+      // HP bar
+      const bw=44*p.s, bh=5*p.s;
+      cx.fillStyle='rgba(0,0,0,0.55)';
+      cx.fillRect(p.x-bw/2, p.y-56*p.s, bw, bh);
+      cx.fillStyle = m.hp/m.maxHp>0.5 ? '#5EE05E' : '#FF5555';
+      cx.fillRect(p.x-bw/2, p.y-56*p.s, bw*(m.hp/m.maxHp), bh);
+    }});
+  }
+  for(const s of shots){
+    const p=proj(s.u,s.z);
+    rl.push({z:s.z, f:()=>{
+      cx.save(); cx.translate(p.x,p.y-34*p.s); cx.rotate(tick*0.3);
+      cx.shadowColor='#FFD700'; cx.shadowBlur=14;
+      cx.fillStyle='#FFE066';
+      starPath(cx,0,0,5,13*p.s+4,5*p.s+1.6); cx.fill();
+      cx.shadowBlur=0; cx.restore();
+    }});
+  }
+  rl.push({z:PL.z, f:drawPlayer});
+  rl.sort((a,b)=>b.z-a.z);          // far → near
+  for(const r of rl) r.f();
+
   drawPtcs();
   drawHUD();
 
