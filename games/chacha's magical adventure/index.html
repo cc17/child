@@ -201,31 +201,42 @@ const LEVELS = [
     clearMsg:'' },
 ];
 
-// ── Pseudo-3D projection ───────────────────────────────────────────────────────
-// World space: u ∈ [-1,1] across the road, z ∈ [0,1] into the scene (0 = near
-// camera, 1 = the portal in the photo). The photos already have true vanishing
-// perspective, so projecting sprites onto that ground plane reads as real 3D.
+// ── Pseudo-3D projection with a follow camera ──────────────────────────────────
+// World space: u ∈ [-1,1] across the road, z ∈ [0,1] into the scene (1 = the
+// portal). The camera dollies forward with 茶茶 (camZ), the photo zooms toward
+// its own vanishing point, so SHE stays the same size and the WORLD moves.
 const PK=3.2;                                    // perspective strength
-const pOf   = z => 1/(1+PK*z);
-const P1    = pOf(1);
-const pNorm = z => (pOf(z)-P1)/(1-P1);           // 1 near → 0 at portal
+const pOf = z => 1/(1+PK*z);
+const P1  = pOf(1);
+let camZ=0;                                      // camera depth (follows player)
+const camZoom = () => (1+PK)/(1+PK*(1-camZ));    // photo zoom for current camera
 function proj(u, z) {
-  const hY=LEVELS[lvIdx].hY, nY=H-70;
-  const pn=pNorm(z);
-  const half = 52 + (198-52)*pn;                 // road half-width in px
+  const cfg=LEVELS[lvIdx], nY=H-70;
+  const zoom=camZoom(), pcY=cfg.hY-58;           // zoom anchor = portal center
+  const hYd = pcY + (cfg.hY-pcY)*zoom;           // portal ground line, zoomed
+  const rel = Math.max(0, z-camZ);
+  const p   = pOf(rel);
+  const pPortal = pOf(1-camZ);
+  const pnn = Math.max(0,(p-pPortal)/(1-pPortal)); // 1 at camera → 0 at portal
+  const halfFar = 52*zoom;
+  const half = halfFar + (198-halfFar)*pnn;
   return {
     x: W/2 + u*half,
-    y: hY + (nY-hY)*pn,
-    s: 0.24 + 0.80*pn,                           // sprite scale at this depth
-    pn, half
+    y: hYd + (nY-hYd)*pnn,
+    s: 0.24 + 0.80*((p-P1)/(1-P1)),              // absolute depth scale
+    pn: pnn, half
   };
 }
 function unproj(sxx, syy) {                       // screen → world (for drag)
-  const hY=LEVELS[lvIdx].hY, nY=H-70;
-  const pn=Math.max(0, Math.min(1, (syy-hY)/(nY-hY)));
-  const p = P1+(1-P1)*pn;
-  const z = Math.max(0.02, Math.min(0.97, (1/p-1)/PK));
-  const half = 52 + (198-52)*pn;
+  const cfg=LEVELS[lvIdx], nY=H-70;
+  const zoom=camZoom(), pcY=cfg.hY-58;
+  const hYd = pcY + (cfg.hY-pcY)*zoom;
+  const pnn = Math.max(0, Math.min(1, (syy-hYd)/(nY-hYd)));
+  const pPortal = pOf(1-camZ);
+  const p = pPortal+(1-pPortal)*pnn;
+  const z = Math.max(0.02, Math.min(0.97, (1/p-1)/PK + camZ));
+  const halfFar = 52*zoom;
+  const half = halfFar + (198-halfFar)*pnn;
   const u = Math.max(-1, Math.min(1, (sxx-W/2)/half));
   return {u, z};
 }
@@ -260,6 +271,17 @@ let heroSpr=null, patchSpr=null, heroAspect=1, heroDH=110;
 // garden sprite for the intro "swept away by the tornado" animation
 let gardenSpr=null, gardenPatch=null, gardenAspect=1;
 
+// The energy orbs and obstacles are ALSO cut from each photo, so what you
+// collect and fight is literally what appears in the pictures.
+const SPRITE_RECT = {
+  cloud:  { orb:{x:.204,y:.674,w:.082,h:.062}, mon:{x:.018,y:.537,w:.140,h:.096} },
+  ocean:  { orb:{x:.828,y:.335,w:.112,h:.082}, mon:{x:.780,y:.135,w:.145,h:.125} },
+  desert: { orb:{x:.452,y:.808,w:.142,h:.102}, mon:{x:.215,y:.685,w:.110,h:.185}, stat:{x:.185,y:.385,w:.145,h:.225} },
+  ice:    { orb:{x:.565,y:.725,w:.125,h:.093}, mon:{x:.875,y:.455,w:.090,h:.088}, stat:{x:.830,y:.815,w:.160,h:.100} },
+  forest: { orb:{x:.150,y:.738,w:.064,h:.058}, mon:{x:.505,y:.585,w:.280,h:.160}, stat:{x:.878,y:.600,w:.062,h:.064} },
+};
+let orbSpr=null, monSpr=null, statSpr=null, orbAsp=1, monAsp=1, statAsp=1;
+
 // Crop a region of img into an offscreen canvas with a soft elliptical
 // feathered edge, so the cut-out blends into the scene instead of looking
 // like a rectangular sticker.
@@ -281,7 +303,7 @@ function maskCrop(img, sx, sy, sw, sh) {
 }
 
 function buildHero(cfg) {
-  heroSpr=null; patchSpr=null;
+  heroSpr=null; patchSpr=null; orbSpr=null; monSpr=null; statSpr=null;
   const img=IMG[cfg.bg], R=HERO_RECT[cfg.bg];
   if(!img || !img.naturalWidth || !R) return;
   const iw=img.naturalWidth, ih=img.naturalHeight;
@@ -290,6 +312,13 @@ function buildHero(cfg) {
   patchSpr = maskCrop(img, (R.x+R.patch.dx)*iw, (R.y+R.patch.dy)*ih, sw, sh);
   heroAspect = sw/sh;
   heroDH = R.dh;
+  // photo-native collectibles & obstacles
+  const S=SPRITE_RECT[cfg.bg];
+  if(S){
+    if(S.orb){ orbSpr =maskCrop(img,S.orb.x*iw, S.orb.y*ih, S.orb.w*iw, S.orb.h*ih); orbAsp =S.orb.w*iw/(S.orb.h*ih); }
+    if(S.mon){ monSpr =maskCrop(img,S.mon.x*iw, S.mon.y*ih, S.mon.w*iw, S.mon.h*ih); monAsp =S.mon.w*iw/(S.mon.h*ih); }
+    if(S.stat){ statSpr=maskCrop(img,S.stat.x*iw,S.stat.y*ih,S.stat.w*iw,S.stat.h*ih); statAsp=S.stat.w*iw/(S.stat.h*ih); }
+  }
 }
 
 // Cover the heroine's original printed position with nearby texture so she
@@ -298,9 +327,8 @@ function drawHeroPatch() {
   const img=IMG[LEVELS[lvIdx].bg], R=HERO_RECT[LEVELS[lvIdx].bg];
   if(!patchSpr || !img || !img.naturalWidth || !R) return;
   const iw=img.naturalWidth, ih=img.naturalHeight;
-  const sc=Math.max(W/iw, H/ih);
-  const ox=(W-iw*sc)/2, oy=(H-ih*sc)/2;
-  const dx=ox+R.x*iw*sc, dy=oy+R.y*ih*sc, dw=R.w*iw*sc, dh=R.h*ih*sc;
+  // use the exact transform drawBg just used, so the patch tracks the zoom
+  const dx=BGT.ox+R.x*iw*BGT.sc, dy=BGT.oy+R.y*ih*BGT.sc, dw=R.w*iw*BGT.sc, dh=R.h*ih*BGT.sc;
   // draw slightly enlarged, twice, so the feathered edges fully cover her
   cx.drawImage(patchSpr, dx-dw*0.05, dy-dh*0.05, dw*1.1, dh*1.1);
   cx.drawImage(patchSpr, dx-dw*0.02, dy-dh*0.02, dw*1.04, dh*1.04);
@@ -342,7 +370,7 @@ function resetGame() {
 function startLevel(i) {
   lvIdx = i;
   const cfg = LEVELS[i];
-  PL.u=0; PL.z=0.08; PL.inv=0; PL.dir=1; PL.atkCd=0;
+  PL.u=0; PL.z=0.08; PL.inv=0; PL.dir=1; PL.atkCd=0; camZ=0;
   buildHero(cfg);                     // cut the heroine out of this level's photo
   saveProgress(i);                    // remember how far she has come
   orbs=[]; obstacles=[]; monsters=[]; shots=[]; ptcs=[];
@@ -409,12 +437,23 @@ function boot() {
 }
 
 // ── Drawing helpers ───────────────────────────────────────────────────────────
+// Current background transform (scale + offset), shared with drawHeroPatch so
+// the patch stays glued to the photo while the camera zooms in.
+const BGT = { sc:1, ox:0, oy:0 };
 function drawBg(key) {
   const img = IMG[key];
   if(!img || !img.naturalWidth) { cx.fillStyle='#111'; cx.fillRect(0,0,W,H); return; }
   const sc = Math.max(W/img.naturalWidth, H/img.naturalHeight);
-  const dw=img.naturalWidth*sc, dh=img.naturalHeight*sc;
-  cx.drawImage(img,(W-dw)/2,(H-dh)/2,dw,dh);
+  let ox=(W-img.naturalWidth*sc)/2, oy=(H-img.naturalHeight*sc)/2, S=sc;
+  if(scene==='level') {
+    // dolly-zoom into the photo's vanishing point as the camera follows 茶茶
+    const zoom=camZoom(), ax=W/2, ay=LEVELS[lvIdx].hY-58;
+    S = sc*zoom;
+    ox = ax + (ox-ax)*zoom;
+    oy = ay + (oy-ay)*zoom;
+  }
+  BGT.sc=S; BGT.ox=ox; BGT.oy=oy;
+  cx.drawImage(img, ox, oy, img.naturalWidth*S, img.naturalHeight*S);
 }
 
 function vignette(strength=0.55) {
@@ -726,6 +765,12 @@ function drawOrb(o, sx, sy, s) {
   const bob=Math.sin(tick*0.08+o.phase)*3;         // gentle float to catch the eye
   cx.save(); cx.translate(sx, sy+bob*s); cx.scale(s,s);
   drawCollectBeacon(r);                             // beacon first, behind the gem
+  if(orbSpr){
+    // the real energy orb cropped from this level's photo
+    const dh=r*2.9, dw=dh*orbAsp;
+    cx.drawImage(orbSpr, -dw/2, -dh/2, dw, dh);
+    cx.restore(); return;
+  }
   switch(lvIdx) {
     case 0: { // Cloud - Rainbow spinning star gem
       const hue=(tick*2.5+o.phase*60)%360;
@@ -791,7 +836,8 @@ function drawOrb(o, sx, sy, s) {
 // ── Draw goal — glows right on the photo's own portal at the end of the road ──
 function drawGoal() {
   const gx=W/2, gy=LEVELS[lvIdx].hY-58;
-  cx.save(); cx.translate(gx,gy); cx.scale(0.88,0.88);
+  const gs=0.88*Math.min(camZoom(), 2.6);   // portal marker grows as you approach
+  cx.save(); cx.translate(gx,gy); cx.scale(gs,gs);
   if(!goalOpen) {
     cx.fillStyle='rgba(0,0,0,0.4)'; cx.beginPath(); roundRect2(cx,-44,-32,88,62,12); cx.fill();
     cx.strokeStyle='rgba(255,255,255,0.35)'; cx.lineWidth=1.5; cx.beginPath(); roundRect2(cx,-44,-32,88,62,12); cx.stroke();
@@ -1151,6 +1197,10 @@ function updateLevel() {
   }
   if(PL.inv>0) PL.inv--;
   if(PL.atkCd>0) PL.atkCd--;
+
+  // Camera follows her: she stays big, the world glides past
+  const camTarget = Math.max(0, Math.min(0.80, PL.z-0.12));
+  camZ += (camTarget-camZ)*0.10;                    // smooth dolly
   const pp=proj(PL.u,PL.z); PL.x=pp.x; PL.y=pp.y;   // projected screen pos
 
   // ── Monster AI: mobile ones chase when 茶茶 gets close ───────────────────────
@@ -1170,8 +1220,8 @@ function updateLevel() {
       m.u=Math.max(-0.95,Math.min(0.95,m.u));
       m.z=Math.max(0.10,Math.min(0.90,m.z));
     }
-    // contact damage (screen-space, scaled by depth)
-    if(PL.inv===0){
+    // contact damage (screen-space, scaled by depth; skip if behind camera)
+    if(PL.inv===0 && m.z>camZ+0.02){
       const mp=proj(m.u,m.z);
       if(Math.abs(mp.x-PL.x)<38*mp.s+14 && Math.abs(mp.y-PL.y)<30*mp.s+12){
         PL.inv=90; hitFlash=18; lives--;
@@ -1247,20 +1297,36 @@ function drawLevel() {
 
   // ── Depth-sorted 3D render pass: far things first, near things on top ───────
   const rl=[];
-  for(const o of orbs) if(o.alive){ const p=proj(o.u,o.z); rl.push({z:o.z, f:()=>drawOrb(o,p.x,p.y,p.s)}); }
-  for(const m of monsters) if(m.alive){
+  for(const o of orbs) if(o.alive && o.z>camZ+0.02){ const p=proj(o.u,o.z); rl.push({z:o.z, f:()=>drawOrb(o,p.x,p.y,p.s)}); }
+  for(const m of monsters) if(m.alive && m.z>camZ+0.02){
     const p=proj(m.u,m.z);
     rl.push({z:m.z, f:()=>{
       // ground shadow
       cx.fillStyle='rgba(0,0,0,0.22)';
       cx.beginPath(); cx.ellipse(p.x,p.y+30*p.s,30*p.s,7*p.s,0,0,Math.PI*2); cx.fill();
-      drawObs(m, tick, p.x, p.y, p.s);
+      const spr = m.mobile ? monSpr : statSpr;
+      if(spr){
+        // the actual creature/prop from the photo, breathing and swaying
+        const asp = m.mobile ? monAsp : statAsp;
+        const dh = (m.mobile?86:80)*p.s*1.25, dw=dh*asp;
+        const sway = m.mobile ? Math.sin(tick*0.08+m.wob)*0.08 : 0;
+        const bob  = m.mobile ? Math.sin(tick*0.12+m.wob)*3*p.s : 0;
+        cx.save();
+        cx.translate(p.x, p.y-dh*0.28+bob);
+        cx.rotate(sway);
+        if(m.flash>0) cx.filter='brightness(2.2)';
+        if(m.mobile && PL.u<m.u) cx.scale(-1,1);   // face 茶茶
+        cx.drawImage(spr, -dw/2, -dh/2, dw, dh);
+        cx.restore();
+      } else {
+        drawObs(m, tick, p.x, p.y, p.s);
+      }
       // HP bar
       const bw=44*p.s, bh=5*p.s;
       cx.fillStyle='rgba(0,0,0,0.55)';
-      cx.fillRect(p.x-bw/2, p.y-56*p.s, bw, bh);
+      cx.fillRect(p.x-bw/2, p.y-62*p.s, bw, bh);
       cx.fillStyle = m.hp/m.maxHp>0.5 ? '#5EE05E' : '#FF5555';
-      cx.fillRect(p.x-bw/2, p.y-56*p.s, bw*(m.hp/m.maxHp), bh);
+      cx.fillRect(p.x-bw/2, p.y-62*p.s, bw*(m.hp/m.maxHp), bh);
     }});
   }
   for(const s of shots){
