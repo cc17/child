@@ -1363,34 +1363,123 @@ function drawLevel() {
 
 function easeOutBack(p){ const c=1.70158; return 1+(c+1)*Math.pow(p-1,3)+c*Math.pow(p-1,2); }
 
+// Per-level celebration themes — colors, title and a scene-matched effect
+const CLEAR_THEME = [
+  { title:'踏破云端！',   c1:[255,215,80],  c2:[255,150,210], fx:'meteor'    },
+  { title:'深海凯旋！',   c1:[80,220,255],  c2:[170,255,240], fx:'bubbles'   },
+  { title:'穿越沙海！',   c1:[255,180,40],  c2:[255,110,60],  fx:'sand'      },
+  { title:'冰雪闪耀！',   c1:[160,225,255], c2:[235,250,255], fx:'snow'      },
+  { title:'森林守护者！', c1:[130,255,120], c2:[255,200,230], fx:'fireflies' },
+];
+const rgba=(c,a)=>`rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+// Scene-matched celebration particles (all deterministic from t — no state)
+function drawClearFx(theme, t, fade, cxx, cyy) {
+  const {c1,c2,fx}=theme;
+  if(fx==='meteor'){                    // shooting stars streak across the sky
+    for(let i=0;i<8;i++){
+      const p=((t*(2.6+i%3)+i*97)%150)/150;
+      const x=((i*151)%W)-40+p*260, y=-30+p*(H*0.85);
+      const g=cx.createLinearGradient(x-70,y-58,x,y);
+      g.addColorStop(0,'transparent'); g.addColorStop(1,rgba(i%2?c1:c2,0.85*fade));
+      cx.strokeStyle=g; cx.lineWidth=2.5; cx.lineCap='round';
+      cx.beginPath(); cx.moveTo(x-70,y-58); cx.lineTo(x,y); cx.stroke();
+      cx.fillStyle=rgba([255,255,255],0.9*fade);
+      cx.shadowColor=rgba(c1,0.9); cx.shadowBlur=8;
+      cx.beginPath(); cx.arc(x,y,2.6,0,Math.PI*2); cx.fill(); cx.shadowBlur=0;
+    }
+  }
+  else if(fx==='bubbles'){              // god-rays + streams of rising bubbles
+    for(let i=0;i<4;i++){
+      const bx=W*(0.14+i*0.24)+Math.sin(t*0.02+i*2)*18;
+      const g=cx.createLinearGradient(bx,0,bx+46,H*0.8);
+      g.addColorStop(0,rgba(c2,0.20*fade)); g.addColorStop(1,'transparent');
+      cx.fillStyle=g;
+      cx.beginPath(); cx.moveTo(bx-8,0); cx.lineTo(bx+34,0); cx.lineTo(bx+82,H*0.8); cx.lineTo(bx+30,H*0.8); cx.closePath(); cx.fill();
+    }
+    for(let i=0;i<22;i++){
+      const x=(i*61)%W+Math.sin(t*0.06+i)*15;
+      const y=H+20-((t*(2.2+i%3)+i*127)%(H+70));
+      const r=3+i%6;
+      cx.strokeStyle=rgba(c1,0.75*fade); cx.lineWidth=1.5;
+      cx.beginPath(); cx.arc(x,y,r,0,Math.PI*2); cx.stroke();
+      cx.fillStyle=rgba([255,255,255],0.30*fade);
+      cx.beginPath(); cx.arc(x-r*0.3,y-r*0.3,r*0.35,0,Math.PI*2); cx.fill();
+    }
+  }
+  else if(fx==='sand'){                 // a golden sand vortex swirling the medal
+    for(let i=0;i<34;i++){
+      const ang=t*0.045+i*2.399, rad=46+((t*1.6+i*41)%210);
+      const x=cxx+Math.cos(ang)*rad, y=cyy-26+Math.sin(ang)*rad*0.55;
+      const a=Math.max(0,(1-rad/256))*0.85*fade;
+      cx.fillStyle=rgba(i%3?c1:c2,a);
+      cx.shadowColor=rgba(c1,a); cx.shadowBlur=5;
+      cx.beginPath(); cx.arc(x,y,1.6+(i%3),0,Math.PI*2); cx.fill();
+    }
+    cx.shadowBlur=0;
+  }
+  else if(fx==='snow'){                 // falling snow + glinting ice shards
+    for(let i=0;i<20;i++){
+      const x=(i*67+Math.sin(t*0.04+i)*26+(W/2))%W;
+      const y=((t*(1.6+i%3)+i*93)%(H+40))-20;
+      cx.save(); cx.globalAlpha=(0.45+0.4*Math.sin(t*0.08+i))*fade;
+      cx.fillStyle=rgba(c2,1); cx.font=`${10+i%8}px sans-serif`; cx.textAlign='center';
+      cx.fillText('❄',x,y); cx.restore();
+    }
+    for(let i=0;i<8;i++){
+      const ang=i*Math.PI/4+t*0.02, rad=128+Math.sin(t*0.06+i)*14;
+      const x=cxx+Math.cos(ang)*rad, y=cyy-26+Math.sin(ang)*rad*0.8;
+      cx.save(); cx.translate(x,y); cx.rotate(t*0.05+i);
+      cx.fillStyle=rgba(c1,(0.5+0.5*Math.sin(t*0.15+i*2))*fade);
+      cx.shadowColor=rgba(c2,0.9); cx.shadowBlur=10;
+      cx.beginPath(); cx.moveTo(0,-13); cx.lineTo(4,0); cx.lineTo(0,13); cx.lineTo(-4,0); cx.closePath(); cx.fill();
+      cx.restore();
+    }
+    cx.shadowBlur=0;
+  }
+  else if(fx==='fireflies'){            // firefly swarm + drifting petals
+    for(let i=0;i<16;i++){
+      const x=cxx+Math.cos(t*0.022+i*2.4)*(70+i*13)*Math.sin(t*0.013+i);
+      const y=cyy-20+Math.sin(t*0.03+i*1.7)*(46+i*9);
+      const a=(Math.sin(t*0.11+i*1.3)+1)*0.42*fade;
+      cx.fillStyle=rgba(c1,a);
+      cx.shadowColor=rgba(c1,a); cx.shadowBlur=11;
+      cx.beginPath(); cx.arc(x,y,2.4,0,Math.PI*2); cx.fill();
+    }
+    cx.shadowBlur=0;
+    for(let i=0;i<11;i++){
+      const x=(i*97+Math.sin(t*0.03+i)*42)%W;
+      const y=((t*(1.3+i%2)+i*131)%(H+40))-20;
+      cx.save(); cx.translate(x,y); cx.rotate(t*0.06+i);
+      cx.fillStyle=rgba(c2,0.8*fade);
+      cx.beginPath(); cx.ellipse(0,0,6,3.4,0,0,Math.PI*2); cx.fill();
+      cx.restore();
+    }
+  }
+}
+
 function drawLevelDoneOverlay() {
   const t=lvDoneT, cxx=W/2, cyy=H*0.44;
   const fade=Math.min(t/12,1);
   cx.fillStyle=`rgba(8,4,26,${0.55*fade})`; cx.fillRect(0,0,W,H);
   const pop=easeOutBack(Math.min(t/16,1));       // bouncy entrance
   const ok = lives>0;
+  const theme=CLEAR_THEME[lvIdx]||CLEAR_THEME[0];
 
-  // rotating light rays behind the badge
+  // rotating light rays behind the badge, tinted for this level's scene
   cx.save(); cx.translate(cxx,cyy); cx.rotate(tick*0.012);
   for(let i=0;i<12;i++){
     cx.rotate(Math.PI/6);
     const rg=cx.createLinearGradient(0,0,0,-230);
-    rg.addColorStop(0, ok?`rgba(255,215,80,${0.20*fade})`:`rgba(140,160,255,${0.16*fade})`);
+    rg.addColorStop(0, ok?rgba(i%2?theme.c1:theme.c2,0.22*fade):`rgba(140,160,255,${0.16*fade})`);
     rg.addColorStop(1,'transparent');
     cx.fillStyle=rg;
     cx.beginPath(); cx.moveTo(0,0); cx.lineTo(-26,-230); cx.lineTo(26,-230); cx.closePath(); cx.fill();
   }
   cx.restore();
 
-  // confetti (only on success)
-  if(ok) for(let i=0;i<26;i++){
-    const fx=(i*137+t*(2+i%4))%W;
-    const fy=((i*211)%H + t*(3+i%3))%(H+30)-15;
-    cx.save(); cx.translate(fx,fy); cx.rotate((t*0.1+i)%(Math.PI*2));
-    cx.fillStyle=`hsla(${(i*47)%360},95%,65%,${0.85*fade})`;
-    cx.fillRect(-4,-2.5,8,5);
-    cx.restore();
-  }
+  // scene-matched celebration effect
+  if(ok) drawClearFx(theme, t, fade, cxx, cyy);
 
   // medal badge
   cx.save(); cx.translate(cxx,cyy-26); cx.scale(pop,pop);
@@ -1404,15 +1493,41 @@ function drawLevelDoneOverlay() {
   cx.beginPath(); cx.arc(0,0,72,0,Math.PI*2); cx.stroke();
   cx.lineWidth=2; cx.strokeStyle= ok?'rgba(180,110,0,0.55)':'rgba(60,75,140,0.6)';
   cx.beginPath(); cx.arc(0,0,62,0,Math.PI*2); cx.stroke();
-  // badge icon
+  // badge icon — the level's OWN energy orb from the photo, set in the medal
   if(ok){
-    cx.fillStyle='#FFFDF2'; cx.shadowColor='#FFF'; cx.shadowBlur=12;
-    starPath(cx,0,2,5,40,17); cx.fill(); cx.shadowBlur=0;
+    if(orbSpr){
+      cx.save();
+      cx.beginPath(); cx.arc(0,0,56,0,Math.PI*2); cx.clip();
+      const oh=104, ow=oh*orbAsp;
+      cx.drawImage(orbSpr, -ow/2, -oh/2+2, ow, oh);
+      cx.restore();
+      // slow-spinning sparkle ring around the orb
+      for(let i=0;i<6;i++){
+        const a=tick*0.04+i*Math.PI/3;
+        cx.fillStyle='rgba(255,255,255,0.9)';
+        cx.shadowColor='#FFF'; cx.shadowBlur=8;
+        starPath(cx,Math.cos(a)*52,Math.sin(a)*52,4,5,2); cx.fill();
+      }
+      cx.shadowBlur=0;
+    } else {
+      cx.fillStyle='#FFFDF2'; cx.shadowColor='#FFF'; cx.shadowBlur=12;
+      starPath(cx,0,2,5,40,17); cx.fill(); cx.shadowBlur=0;
+    }
   } else {
     cx.font='58px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
     cx.fillText('💔',0,4);
   }
   cx.restore();
+
+  // expanding shockwave rings on entrance
+  if(ok && t<40){
+    const rp=t/40;
+    cx.strokeStyle=rgba(theme.c1,(1-rp)*0.8);
+    cx.lineWidth=4*(1-rp)+1;
+    cx.beginPath(); cx.arc(cxx,cyy-26,80+rp*190,0,Math.PI*2); cx.stroke();
+    cx.strokeStyle=rgba(theme.c2,(1-rp)*0.55);
+    cx.beginPath(); cx.arc(cxx,cyy-26,80+rp*130,0,Math.PI*2); cx.stroke();
+  }
 
   // three little stars pop in one-by-one above the medal (success only)
   if(ok) for(let i=0;i<3;i++){
@@ -1431,13 +1546,17 @@ function drawLevelDoneOverlay() {
   const ty=cyy+92;
   cx.save(); cx.globalAlpha=Math.min(Math.max((t-8)/12,0),1);
   cx.font='bold 32px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
-  cx.lineWidth=6; cx.strokeStyle='rgba(40,15,0,0.65)'; cx.lineJoin='round';
-  const title= ok?'关卡完成！':'差一点点！';
+  cx.lineWidth=6; cx.strokeStyle='rgba(20,8,30,0.7)'; cx.lineJoin='round';
+  const title= ok?theme.title:'差一点点！';
   cx.strokeText(title,cxx,ty);
   const tg=cx.createLinearGradient(0,ty-18,0,ty+18);
-  if(ok){ tg.addColorStop(0,'#FFF6C8'); tg.addColorStop(1,'#FFB300'); }
+  if(ok){ tg.addColorStop(0,'#FFFFFF'); tg.addColorStop(0.45,rgba(theme.c2,1)); tg.addColorStop(1,rgba(theme.c1,1)); }
   else  { tg.addColorStop(0,'#E8EEFF'); tg.addColorStop(1,'#9FB2F0'); }
   cx.fillStyle=tg; cx.fillText(title,cxx,ty);
+  if(ok){
+    cx.shadowColor=rgba(theme.c1,0.9); cx.shadowBlur=18;
+    cx.fillText(title,cxx,ty); cx.shadowBlur=0;
+  }
   cx.restore();
 
   // subtitle
