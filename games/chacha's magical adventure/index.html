@@ -12,53 +12,19 @@ body {
   min-height:100vh; overflow:hidden;
   font-family:'PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif;
 }
-#wrap { position:relative; display:flex; flex-direction:column; align-items:center; gap:14px; }
-canvas { display:block; border-radius:16px; box-shadow:0 0 50px rgba(120,80,255,0.6), 0 0 100px rgba(80,40,180,0.3); }
-#dpad {
-  display:grid;
-  grid-template-columns: repeat(3, 64px);
-  grid-template-rows: repeat(3, 64px);
-  gap:6px;
-}
-.btn {
-  width:64px; height:64px; border-radius:14px;
-  border:2px solid rgba(255,255,255,0.25);
-  background:rgba(255,255,255,0.12);
-  backdrop-filter:blur(8px);
-  color:white; font-size:26px; cursor:pointer;
-  user-select:none; touch-action:none;
-  display:flex; align-items:center; justify-content:center;
-  transition:transform .08s, background .08s;
+#wrap { position:relative; display:flex; align-items:center; justify-content:center; }
+canvas {
+  display:block; border-radius:12px;
+  box-shadow:0 0 50px rgba(120,80,255,0.6), 0 0 100px rgba(80,40,180,0.3);
+  touch-action:none;
   -webkit-tap-highlight-color:transparent;
+  user-select:none;
 }
-.btn:active, .btn.on {
-  background:rgba(255,255,255,0.35);
-  transform:scale(0.9);
-  border-color:rgba(255,255,255,0.6);
-}
-.btn-empty { background:transparent; border:none; pointer-events:none; }
-#bA {
-  background:radial-gradient(circle at 35% 30%, rgba(255,120,90,0.55), rgba(200,30,30,0.35));
-  border-color:rgba(255,160,120,0.55);
-  font-size:24px;
-}
-#bA:active, #bA.on { background:radial-gradient(circle at 35% 30%, rgba(255,160,120,0.8), rgba(230,60,40,0.6)); }
 </style>
 </head>
 <body>
 <div id="wrap">
   <canvas id="c"></canvas>
-  <div id="dpad">
-    <div class="btn-empty"></div>
-    <button class="btn" id="bU">▲</button>
-    <div class="btn-empty"></div>
-    <button class="btn" id="bL">◀</button>
-    <button class="btn" id="bA">⚔️</button>
-    <button class="btn" id="bR">▶</button>
-    <div class="btn-empty"></div>
-    <button class="btn" id="bD">▼</button>
-    <div class="btn-empty"></div>
-  </div>
 </div>
 
 <script>
@@ -67,10 +33,9 @@ const cv = document.getElementById('c');
 const cx = cv.getContext('2d');
 
 function resize() {
+  // fullscreen: the game canvas takes the whole viewport (controls live inside it)
   const vw = window.innerWidth, vh = window.innerHeight;
-  const dpadH = 230, avail = vh - dpadH - 28;
-  const maxW = Math.min(vw - 12, 480), maxH = Math.min(avail, 680);
-  const scale = Math.min(maxW / 480, maxH / 680);
+  const scale = Math.min((vw-8) / 480, (vh-8) / 680);
   cv.width = 480; cv.height = 680;
   cv.style.width  = Math.round(480 * scale) + 'px';
   cv.style.height = Math.round(680 * scale) + 'px';
@@ -121,32 +86,33 @@ cv.addEventListener('click', e => {
   tap((e.clientX-r.left)*W/r.width, (e.clientY-r.top)*H/r.height);
 });
 
-// ── Touch-drag control: drag a finger on the canvas to steer 茶茶 directly ─────
-const DRAG = { on:false, x:0, y:0 };
-cv.addEventListener('pointerdown', e => {
+// ── MOBA-style touch controls (王者荣耀 layout, drawn inside the scene) ─────────
+//   left half  = virtual joystick (appears where the thumb lands)
+//   right side = ⚔️ attack button
+const JOY = { active:false, id:null, bx:0, by:0, x:0, y:0 };
+const ATK_BTN = { x:W-72, y:H-84, r:46 };
+function canvasXY(e){
   const r=cv.getBoundingClientRect();
-  DRAG.on=true; DRAG.x=(e.clientX-r.left)*W/r.width; DRAG.y=(e.clientY-r.top)*H/r.height;
+  return [(e.clientX-r.left)*W/r.width, (e.clientY-r.top)*H/r.height];
+}
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault(); ac();
+  if(scene!=='level') return;
+  const [x,y]=canvasXY(e);
+  if(x < W*0.52 && !JOY.active){                    // left thumb → joystick
+    JOY.active=true; JOY.id=e.pointerId;
+    JOY.bx=x; JOY.by=y; JOY.x=x; JOY.y=y;
+  } else {                                          // right side → attack
+    doAttack();
+  }
 });
 cv.addEventListener('pointermove', e => {
-  if(!DRAG.on) return;
-  const r=cv.getBoundingClientRect();
-  DRAG.x=(e.clientX-r.left)*W/r.width; DRAG.y=(e.clientY-r.top)*H/r.height;
+  if(!JOY.active || e.pointerId!==JOY.id) return;
+  const [x,y]=canvasXY(e);
+  JOY.x=x; JOY.y=y;
 });
-['pointerup','pointerleave','pointercancel'].forEach(ev =>
-  cv.addEventListener(ev, () => { DRAG.on=false; }));
-
-function bindBtn(id, dir) {
-  const el = document.getElementById(id);
-  el.addEventListener('pointerdown', e => { e.preventDefault(); K[dir]=true; el.classList.add('on'); });
-  ['pointerup','pointerleave','pointercancel'].forEach(ev =>
-    el.addEventListener(ev, () => { K[dir]=false; el.classList.remove('on'); }));
-}
-bindBtn('bU','up'); bindBtn('bD','down'); bindBtn('bL','left'); bindBtn('bR','right');
-{
-  const bA=document.getElementById('bA');
-  bA.addEventListener('pointerdown', e => { e.preventDefault(); if(scene==='level') doAttack(); bA.classList.add('on'); });
-  ['pointerup','pointerleave','pointercancel'].forEach(ev => bA.addEventListener(ev, ()=>bA.classList.remove('on')));
-}
+['pointerup','pointercancel'].forEach(ev =>
+  cv.addEventListener(ev, e => { if(e.pointerId===JOY.id){ JOY.active=false; JOY.id=null; } }));
 
 // ── Sound effects (WebAudio, fully synthesized — no audio files) ───────────────
 let AC=null;
@@ -185,7 +151,7 @@ const sfx = {
 // ── Level configs ─────────────────────────────────────────────────────────────
 const LEVELS = [
   { name:'云朵跑道', bg:'cloud',  need:6, obsCount:6, obsType:'wand',  hY:300,
-    transMsg:'龙卷风把茶茶卷上了天！\n往云道深处走，⚔️打怪收集能量球！',
+    transMsg:'龙卷风把茶茶卷上了天！\n左手摇杆走位，右下⚔️打怪收集能量球！',
     clearMsg:'茶茶踏过云端，一脚踩空…\n哗啦一声掉进了大海里！' },
   { name:'深海冒险', bg:'ocean',  need:6, obsCount:6, obsType:'jelly', hY:250,
     transMsg:'茶茶骑上海马，在深海里冒险！\n击退水母，收集珍珠！',
@@ -393,9 +359,10 @@ function startLevel(i) {
     do { mu=-0.8+Math.random()*1.6; mz=0.18+Math.random()*0.65; }
     while(Math.hypot(mu-PL.u, (mz-PL.z)*3) < 0.5);
     monsters.push({
-      u:mu, z:mz, variant,
+      u:mu, z:mz, homeU:mu, variant,
       hp: stat?2:3, maxHp: stat?2:3,
       spd:(0.0012+Math.random()*0.0014)*diff,
+      aggro:0.22+Math.random()*0.10,      // small, varied detection range
       mobile:!stat, wob:Math.random()*Math.PI*2,
       flash:0, alive:true,
     });
@@ -482,7 +449,7 @@ function drawPlayer() {
 
   const depth = proj(PL.u, PL.z).s;              // near = big, far = small
   const dh=heroDH*depth, dw=dh*heroAspect;
-  const moving = K.up||K.down||K.left||K.right||DRAG.on;
+  const moving = K.up||K.down||K.left||K.right||JOY.active;
   const bob  = (moving ? Math.sin(tick*0.25)*3.5 : Math.sin(tick*0.07)*1.5)*depth;
   const tilt = (K.left?-1:K.right?1:0)*0.055;
 
@@ -1019,6 +986,46 @@ function drawHUD() {
   }
 }
 
+// ── On-screen MOBA controls: joystick (left thumb) + attack button ─────────────
+function drawControls() {
+  // attack button, bottom-right (王者荣耀 style)
+  const b=ATK_BTN;
+  cx.save();
+  const ready = PL.atkCd<=0;
+  const bg=cx.createRadialGradient(b.x-b.r*0.3,b.y-b.r*0.3,0,b.x,b.y,b.r);
+  bg.addColorStop(0, ready?'rgba(255,150,110,0.85)':'rgba(120,120,130,0.6)');
+  bg.addColorStop(1, ready?'rgba(210,50,40,0.75)':'rgba(70,70,80,0.55)');
+  cx.fillStyle=bg;
+  cx.beginPath(); cx.arc(b.x,b.y,b.r,0,Math.PI*2); cx.fill();
+  cx.strokeStyle='rgba(255,255,255,0.55)'; cx.lineWidth=2.5;
+  cx.beginPath(); cx.arc(b.x,b.y,b.r,0,Math.PI*2); cx.stroke();
+  // cooldown sweep
+  if(!ready){
+    cx.fillStyle='rgba(0,0,0,0.35)';
+    cx.beginPath(); cx.moveTo(b.x,b.y);
+    cx.arc(b.x,b.y,b.r,-Math.PI/2,-Math.PI/2+Math.PI*2*(PL.atkCd/18)); cx.closePath(); cx.fill();
+  }
+  cx.font='30px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+  cx.fillText('⚔️', b.x, b.y+1);
+  cx.restore();
+
+  // joystick, only while the thumb is down
+  if(JOY.active){
+    let jx=JOY.x-JOY.bx, jy=JOY.y-JOY.by;
+    const mag=Math.hypot(jx,jy), lim=52;
+    if(mag>lim){ jx=jx/mag*lim; jy=jy/mag*lim; }
+    cx.save();
+    cx.strokeStyle='rgba(255,255,255,0.45)'; cx.lineWidth=2.5;
+    cx.fillStyle='rgba(255,255,255,0.10)';
+    cx.beginPath(); cx.arc(JOY.bx,JOY.by,lim,0,Math.PI*2); cx.fill(); cx.stroke();
+    const kg=cx.createRadialGradient(JOY.bx+jx-6,JOY.by+jy-6,0,JOY.bx+jx,JOY.by+jy,26);
+    kg.addColorStop(0,'rgba(255,255,255,0.95)'); kg.addColorStop(1,'rgba(190,190,220,0.85)');
+    cx.fillStyle=kg;
+    cx.beginPath(); cx.arc(JOY.bx+jx,JOY.by+jy,24,0,Math.PI*2); cx.fill();
+    cx.restore();
+  }
+}
+
 // ── Particles ─────────────────────────────────────────────────────────────────
 function spawnOrbPtcs(x,y) {
   for(let i=0;i<12;i++){
@@ -1185,13 +1192,16 @@ function updateLevel() {
   if(K.down)  { PL.z=Math.max(0.02, PL.z-zSpd); moved=true; }
   if(K.left)  { PL.u=Math.max(-1, PL.u-uSpd); PL.dir=-1; moved=true; }
   if(K.right) { PL.u=Math.min( 1, PL.u+uSpd); PL.dir=1;  moved=true; }
-  if(!moved && DRAG.on) {
-    const t=unproj(DRAG.x, DRAG.y);
-    const du=t.u-PL.u, dz=t.z-PL.z, d=Math.hypot(du,dz*3);
-    if(d>0.03){
-      PL.u+=du/d*uSpd*0.9; PL.z+=dz/d*zSpd*2.4;
-      PL.u=Math.max(-1,Math.min(1,PL.u)); PL.z=Math.max(0.02,Math.min(0.97,PL.z));
-      if(Math.abs(du)>0.02) PL.dir=du>0?1:-1;
+  if(!moved && JOY.active) {
+    // virtual joystick: knob offset = walk direction (up on stick = forward)
+    let jx=JOY.x-JOY.bx, jy=JOY.y-JOY.by;
+    const mag=Math.hypot(jx,jy);
+    if(mag>8){
+      const cap=Math.min(mag,52)/52;                 // stick strength 0..1
+      jx/=mag; jy/=mag;
+      PL.u=Math.max(-1,Math.min(1, PL.u + jx*uSpd*cap));
+      PL.z=Math.max(0.02,Math.min(0.97, PL.z - jy*zSpd*cap));
+      if(Math.abs(jx)>0.35) PL.dir=jx>0?1:-1;
       moved=true;
     }
   }
@@ -1211,11 +1221,11 @@ function updateLevel() {
       m.wob+=0.05;
       const du=PL.u-m.u, dz=PL.z-m.z;
       const d=Math.hypot(du, dz*3);
-      if(d<0.55){                        // aggro: chase her!
-        m.u+=du/(d||1)*m.spd*14;
-        m.z+=dz/(d||1)*m.spd*5;
-      } else {                           // patrol side to side
-        m.u+=Math.sin(m.wob)*m.spd*8;
+      if(d<m.aggro){                     // only chase when 茶茶 is really close
+        m.u+=du/(d||1)*m.spd*6;
+        m.z+=dz/(d||1)*m.spd*3;
+      } else {                           // patrol gently around its own spot
+        m.u += (m.homeU + Math.sin(m.wob)*0.22 - m.u)*0.02;
       }
       m.u=Math.max(-0.95,Math.min(0.95,m.u));
       m.z=Math.max(0.10,Math.min(0.90,m.z));
@@ -1345,6 +1355,7 @@ function drawLevel() {
 
   drawPtcs();
   drawHUD();
+  drawControls();
 
   // Level done overlay
   if(lvDone){
