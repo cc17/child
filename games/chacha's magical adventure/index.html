@@ -99,6 +99,8 @@ cv.addEventListener('pointerdown', e => {
   e.preventDefault(); ac();
   if(scene!=='level') return;
   const [x,y]=canvasXY(e);
+  if(shopOpen){ handleShopTap(x,y); return; }        // shop swallows all taps
+  if(Math.hypot(x-SHOP_BTN.x, y-SHOP_BTN.y)<SHOP_BTN.r+8){ shopOpen=true; return; }
   if(x < W*0.52 && !JOY.active){                    // left thumb → joystick
     JOY.active=true; JOY.id=e.pointerId;
     JOY.bx=x; JOY.by=y; JOY.x=x; JOY.y=y;
@@ -146,6 +148,8 @@ const sfx = {
   attack(){ tone(1400,.08,'square',.10,0,-800); tone(700,.10,'sine',.12,.01,-200); }, // magic swish
   hitm(){ tone(260,.09,'square',.18,0,-80); },                                     // monster hit
   mdie(){ tone(500,.12,'triangle',.2,0,-300); tone(760,.18,'sine',.14,.05,-400); },// monster defeated
+  buy(){ [784,1047,1319].forEach((f,i)=>tone(f,.12,'sine',.2,i*.07)); },           // cash register ding
+  deny(){ tone(180,.16,'square',.15,0,-40); tone(140,.18,'square',.12,.1,-30); },  // can't afford
 };
 
 // ── Level configs ─────────────────────────────────────────────────────────────
@@ -217,7 +221,7 @@ let transT = 0;
 let winT = 0;
 
 // Player — lives in world (u,z) space; x/y are the projected screen coords
-const PL = { u:0, z:0.08, x:0, y:0, w:34, h:46, spd:3.8, inv:0, dir:1, atkCd:0 };
+const PL = { u:0, z:0.08, x:0, y:0, w:34, h:46, spd:3.8, inv:0, dir:1, atkCd:0, shield:0 };
 let monsters = [], shots = [];
 
 // ── Photo-hero sprites ─────────────────────────────────────────────────────────
@@ -310,6 +314,51 @@ function loadProgress(){ const v=parseInt(localStorage.getItem(SAVE_KEY)||'0',10
 function saveProgress(i){ try{ localStorage.setItem(SAVE_KEY,String(Math.max(i,loadProgress()))); }catch(e){} }
 function clearProgress(){ try{ localStorage.removeItem(SAVE_KEY); }catch(e){} }
 
+// ── Coins, weapon level & the item shop ────────────────────────────────────────
+let coins    = parseInt(localStorage.getItem('chacha_coins')||'30',10);   // start with pocket money
+let weaponLv = Math.min(3, parseInt(localStorage.getItem('chacha_weapon')||'1',10));
+let shopOpen = false;
+let floatTexts = [];                                   // "+5 🪙" popups
+function saveWallet(){ try{
+  localStorage.setItem('chacha_coins', String(coins));
+  localStorage.setItem('chacha_weapon', String(weaponLv));
+}catch(e){} }
+function addCoins(n, x, y){
+  coins+=n; saveWallet();
+  if(x!==undefined) floatTexts.push({x, y, txt:`+${n}🪙`, life:50});
+}
+const SHOP_ITEMS = [
+  { icon:'❤️', name:'补满生命', desc:'爱心全部恢复',       price:30,
+    can:()=>lives<6,        buy:()=>{ lives=6; } },
+  { icon:'⚔️', name:'升级魔法星', desc:'攻击更猛，冷却更快', price:()=>weaponLv===1?50:120,
+    can:()=>weaponLv<3,     buy:()=>{ weaponLv++; saveWallet(); } },
+  { icon:'🛡️', name:'魔法护盾', desc:'10秒无敌不掉血',     price:40,
+    can:()=>PL.shield<=0,   buy:()=>{ PL.shield=600; } },
+];
+const SHOP_BTN = { x:W-30, y:92, r:22 };
+function shopPanelRect(){ return { x:W/2-175, y:H/2-205, w:350, h:400 }; }
+function handleShopTap(x, y){
+  const p=shopPanelRect();
+  // close: ✕ button or anywhere outside the panel
+  if(Math.hypot(x-(p.x+p.w-26), y-(p.y+30))<20 || x<p.x||x>p.x+p.w||y<p.y||y>p.y+p.h){
+    shopOpen=false; return;
+  }
+  for(let i=0;i<SHOP_ITEMS.length;i++){
+    const ry=p.y+120+i*92;
+    if(y>ry-40 && y<ry+40 && x>p.x+16 && x<p.x+p.w-16){
+      const it=SHOP_ITEMS[i];
+      const price=typeof it.price==='function'?it.price():it.price;
+      if(it.can() && coins>=price){
+        coins-=price; it.buy(); saveWallet(); sfx.buy();
+        floatTexts.push({x:PL.x||W/2, y:PL.y||H/2, txt:`${it.icon} 购买成功!`, life:60});
+      } else {
+        sfx.deny();
+      }
+      return;
+    }
+  }
+}
+
 // ── Tap handler (coordinate-aware, for the continue / restart choice) ─────────
 function tap(tx=W/2, ty=H/2) {
   ac();                                     // unlock audio on first gesture
@@ -336,7 +385,8 @@ function resetGame() {
 function startLevel(i) {
   lvIdx = i;
   const cfg = LEVELS[i];
-  PL.u=0; PL.z=0.08; PL.inv=0; PL.dir=1; PL.atkCd=0; camZ=0;
+  PL.u=0; PL.z=0.08; PL.inv=0; PL.dir=1; PL.atkCd=0; PL.shield=0; camZ=0;
+  shopOpen=false; floatTexts=[];
   buildHero(cfg);                     // cut the heroine out of this level's photo
   saveProgress(i);                    // remember how far she has come
   orbs=[]; obstacles=[]; monsters=[]; shots=[]; ptcs=[];
@@ -372,8 +422,8 @@ function startLevel(i) {
 
 // ── Attack: 茶茶 fires a magic star forward ─────────────────────────────────────
 function doAttack() {
-  if(scene!=='level' || lvDone || PL.atkCd>0) return;
-  PL.atkCd=18;                                   // ~0.3s cooldown
+  if(scene!=='level' || lvDone || shopOpen || PL.atkCd>0) return;
+  PL.atkCd=21-weaponLv*3;                        // higher weapon = faster attacks
   sfx.attack();
   // aim at the nearest living monster ahead-ish, else straight forward
   let best=null, bd=1e9;
@@ -382,7 +432,12 @@ function doAttack() {
     const d=Math.hypot((m.u-PL.u)*1.4, (m.z-PL.z)*4);
     if(d<bd){ bd=d; best=m; }
   }
-  shots.push({ u:PL.u, z:PL.z+0.03, target:best, life:70 });
+  shots.push({ u:PL.u, z:PL.z+0.03, target:best, life:70, dmg:weaponLv });
+  // Lv3 fires a spread of three stars
+  if(weaponLv>=3){
+    shots.push({ u:PL.u-0.16, z:PL.z+0.03, target:best, life:70, dmg:weaponLv });
+    shots.push({ u:PL.u+0.16, z:PL.z+0.03, target:best, life:70, dmg:weaponLv });
+  }
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -463,6 +518,24 @@ function drawPlayer() {
   if(dir===1) cx.scale(-1,1);   // source photos face left; flip when heading right
   cx.drawImage(heroSpr, -dw/2, -dh*0.52, dw, dh);
   cx.restore();
+
+  // magic shield bubble
+  if(PL.shield>0){
+    const sr=dw*0.62+Math.sin(tick*0.15)*3;
+    const fading = PL.shield<120 && Math.floor(PL.shield/8)%2===0;  // blink before expiring
+    if(!fading){
+      cx.save();
+      const sg=cx.createRadialGradient(x,y-dh*0.1,sr*0.5,x,y-dh*0.1,sr);
+      sg.addColorStop(0,'rgba(120,220,255,0)');
+      sg.addColorStop(0.8,'rgba(120,220,255,0.14)');
+      sg.addColorStop(1,'rgba(160,240,255,0.55)');
+      cx.fillStyle=sg;
+      cx.beginPath(); cx.arc(x,y-dh*0.1,sr,0,Math.PI*2); cx.fill();
+      cx.strokeStyle='rgba(190,245,255,0.8)'; cx.lineWidth=2;
+      cx.beginPath(); cx.arc(x,y-dh*0.1,sr,0,Math.PI*2); cx.stroke();
+      cx.restore();
+    }
+  }
 }
 
 function drawVectorPlayer() {
@@ -966,6 +1039,10 @@ function drawHUD() {
   for(let i=0;i<6;i++) heartsStr += (i < lives) ? '❤️' : '🖤';
   cx.fillText(heartsStr, 12, 38);
 
+  // Coin purse
+  cx.font='bold 15px sans-serif'; cx.textAlign='right'; cx.fillStyle='#FFE066';
+  cx.fillText(`🪙 ${coins}`, W-12, 38);
+
   // Progress bar
   const barX=14, barY=52, barW=W-28, barH=8;
   cx.fillStyle='rgba(255,255,255,0.15)';
@@ -1007,6 +1084,22 @@ function drawControls() {
   }
   cx.font='30px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
   cx.fillText('⚔️', b.x, b.y+1);
+  // weapon level pips under the blade
+  cx.font='bold 11px sans-serif'; cx.fillStyle='rgba(255,255,255,0.95)';
+  cx.fillText('★'.repeat(weaponLv), b.x, b.y+26);
+  cx.restore();
+
+  // shop button (top-right, under the HUD)
+  cx.save();
+  const sb=SHOP_BTN;
+  const sg2=cx.createRadialGradient(sb.x-6,sb.y-6,0,sb.x,sb.y,sb.r);
+  sg2.addColorStop(0,'rgba(140,220,140,0.9)'); sg2.addColorStop(1,'rgba(30,140,70,0.85)');
+  cx.fillStyle=sg2;
+  cx.beginPath(); cx.arc(sb.x,sb.y,sb.r,0,Math.PI*2); cx.fill();
+  cx.strokeStyle='rgba(255,255,255,0.6)'; cx.lineWidth=2;
+  cx.beginPath(); cx.arc(sb.x,sb.y,sb.r,0,Math.PI*2); cx.stroke();
+  cx.font='20px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+  cx.fillText('🛒', sb.x, sb.y+1);
   cx.restore();
 
   // joystick, only while the thumb is down
@@ -1024,6 +1117,92 @@ function drawControls() {
     cx.beginPath(); cx.arc(JOY.bx+jx,JOY.by+jy,24,0,Math.PI*2); cx.fill();
     cx.restore();
   }
+}
+
+// ── Floating reward texts (+5🪙 …) ─────────────────────────────────────────────
+function drawFloatTexts() {
+  floatTexts = floatTexts.filter(f=>f.life>0);
+  for(const f of floatTexts){
+    cx.save();
+    cx.globalAlpha=Math.min(f.life/20,1);
+    cx.font='bold 15px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+    cx.lineWidth=4; cx.strokeStyle='rgba(40,20,0,0.7)'; cx.lineJoin='round';
+    cx.strokeText(f.txt, f.x, f.y);
+    cx.fillStyle='#FFE066';
+    cx.fillText(f.txt, f.x, f.y);
+    cx.restore();
+    f.y-=0.8; f.life--;
+  }
+}
+
+// ── The item shop ──────────────────────────────────────────────────────────────
+function drawShop() {
+  const p=shopPanelRect();
+  cx.fillStyle='rgba(5,3,20,0.62)'; cx.fillRect(0,0,W,H);
+
+  // panel
+  cx.save();
+  cx.shadowColor='rgba(120,80,255,0.55)'; cx.shadowBlur=30;
+  const pg=cx.createLinearGradient(0,p.y,0,p.y+p.h);
+  pg.addColorStop(0,'rgba(46,28,86,0.97)'); pg.addColorStop(1,'rgba(24,14,52,0.97)');
+  cx.fillStyle=pg;
+  cx.beginPath(); roundRect2(cx,p.x,p.y,p.w,p.h,20); cx.fill();
+  cx.shadowBlur=0;
+  cx.strokeStyle='rgba(255,215,100,0.55)'; cx.lineWidth=2;
+  cx.beginPath(); roundRect2(cx,p.x,p.y,p.w,p.h,20); cx.stroke();
+  cx.restore();
+
+  // header
+  cx.font='bold 22px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+  cx.fillStyle='#FFE066';
+  cx.fillText('🛒 魔法商店', W/2, p.y+34);
+  cx.font='14px sans-serif'; cx.fillStyle='rgba(255,255,255,0.85)';
+  cx.fillText(`我的金币：🪙 ${coins}`, W/2, p.y+64);
+  // close ✕
+  cx.fillStyle='rgba(255,255,255,0.15)';
+  cx.beginPath(); cx.arc(p.x+p.w-26,p.y+30,16,0,Math.PI*2); cx.fill();
+  cx.font='bold 16px sans-serif'; cx.fillStyle='rgba(255,255,255,0.9)';
+  cx.fillText('✕', p.x+p.w-26, p.y+31);
+
+  // items
+  for(let i=0;i<SHOP_ITEMS.length;i++){
+    const it=SHOP_ITEMS[i], ry=p.y+120+i*92;
+    const price=typeof it.price==='function'?it.price():it.price;
+    const usable=it.can(), afford=coins>=price, ok=usable&&afford;
+
+    cx.fillStyle= ok?'rgba(255,255,255,0.10)':'rgba(255,255,255,0.045)';
+    cx.beginPath(); roundRect2(cx,p.x+16,ry-38,p.w-32,76,14); cx.fill();
+    cx.strokeStyle= ok?'rgba(255,215,100,0.45)':'rgba(255,255,255,0.12)'; cx.lineWidth=1.5;
+    cx.beginPath(); roundRect2(cx,p.x+16,ry-38,p.w-32,76,14); cx.stroke();
+
+    cx.font='30px sans-serif'; cx.textAlign='center';
+    cx.globalAlpha= usable?1:0.45;
+    cx.fillText(it.icon, p.x+50, ry);
+    cx.font='bold 16px sans-serif'; cx.textAlign='left';
+    cx.fillStyle= usable?'white':'rgba(255,255,255,0.5)';
+    let nm=it.name;
+    if(i===1) nm += weaponLv<3?`（Lv${weaponLv}→Lv${weaponLv+1}）`:'（已满级）';
+    if(i===0 && !usable) nm += '（生命已满）';
+    if(i===2 && !usable) nm += '（护盾生效中）';
+    cx.fillText(nm, p.x+82, ry-11);
+    cx.font='12px sans-serif'; cx.fillStyle='rgba(255,255,255,0.6)';
+    cx.fillText(it.desc, p.x+82, ry+13);
+    cx.globalAlpha=1;
+
+    // price tag
+    if(usable){
+      cx.font='bold 15px sans-serif'; cx.textAlign='right';
+      cx.fillStyle= afford?'#FFE066':'#FF7A7A';
+      cx.fillText(`🪙${price}`, p.x+p.w-30, ry);
+    } else {
+      cx.font='13px sans-serif'; cx.textAlign='right';
+      cx.fillStyle='rgba(255,255,255,0.4)';
+      cx.fillText('—', p.x+p.w-30, ry);
+    }
+  }
+
+  cx.font='12px sans-serif'; cx.textAlign='center'; cx.fillStyle='rgba(255,255,255,0.55)';
+  cx.fillText('打怪 +5🪙 · 收集能量球 +2🪙 · 过关 +20🪙', W/2, p.y+p.h-24);
 }
 
 // ── Particles ─────────────────────────────────────────────────────────────────
@@ -1184,6 +1363,8 @@ function drawTrans() {
 function updateLevel() {
   tick++;
   if(lvDone) return;
+  if(shopOpen) return;                 // world pauses while shopping
+  if(PL.shield>0) PL.shield--;
 
   // ── Move 茶茶 through the 3D scene: ▲ walks INTO the photo, ▼ back out ──────
   const uSpd=0.022, zSpd=0.0085;
@@ -1230,8 +1411,8 @@ function updateLevel() {
       m.u=Math.max(-0.95,Math.min(0.95,m.u));
       m.z=Math.max(0.10,Math.min(0.90,m.z));
     }
-    // contact damage (screen-space, scaled by depth; skip if behind camera)
-    if(PL.inv===0 && m.z>camZ+0.02){
+    // contact damage (skip if behind camera, invincible, or shielded)
+    if(PL.inv===0 && PL.shield<=0 && m.z>camZ+0.02){
       const mp=proj(m.u,m.z);
       if(Math.abs(mp.x-PL.x)<38*mp.s+14 && Math.abs(mp.y-PL.y)<30*mp.s+12){
         PL.inv=90; hitFlash=18; lives--;
@@ -1256,13 +1437,14 @@ function updateLevel() {
     for(const m of monsters){
       if(!m.alive) continue;
       if(Math.hypot(m.u-s.u,(m.z-s.z)*3.4)<0.11){
-        s.life=0; m.hp--; m.flash=8;
+        s.life=0; m.hp-=s.dmg||1; m.flash=8;
         const mp=proj(m.u,m.z);
         if(m.hp<=0){
           m.alive=false; sfx.mdie();
           spawnOrbPtcs(mp.x,mp.y-20);
-          // defeated monsters drop an energy orb!
+          // defeated monsters drop an energy orb + coins!
           orbs.push({ u:m.u, z:m.z, r:16, alive:true, phase:Math.random()*Math.PI*2 });
+          addCoins(m.mobile?5:3, mp.x, mp.y-40);
         } else sfx.hitm();
         break;
       }
@@ -1277,6 +1459,7 @@ function updateLevel() {
       orb.alive=false; collected++;
       const op=proj(orb.u,orb.z);
       spawnOrbPtcs(op.x,op.y);
+      addCoins(2, op.x, op.y-30);
       if(collected>=LEVELS[lvIdx].need && !goalOpen){ goalOpen=true; sfx.goal(); }
       else sfx.collect();
     }
@@ -1285,6 +1468,7 @@ function updateLevel() {
   // ── Walk into the glowing portal at the end of the road ────────────────────
   if(goalOpen && PL.z>0.88 && Math.abs(PL.u)<0.5){
     lvDone=true;
+    addCoins(20);                          // level-clear bonus
     if(lvIdx+1 < LEVELS.length) { sfx.clear(); saveProgress(lvIdx+1); }
     else { sfx.win(); clearProgress(); }   // finished the whole journey!
     setTimeout(()=>{
@@ -1342,10 +1526,12 @@ function drawLevel() {
   for(const s of shots){
     const p=proj(s.u,s.z);
     rl.push({z:s.z, f:()=>{
+      const pw=1+0.3*((s.dmg||1)-1);          // upgraded stars are bigger
       cx.save(); cx.translate(p.x,p.y-34*p.s); cx.rotate(tick*0.3);
-      cx.shadowColor='#FFD700'; cx.shadowBlur=14;
-      cx.fillStyle='#FFE066';
-      starPath(cx,0,0,5,13*p.s+4,5*p.s+1.6); cx.fill();
+      cx.shadowColor= s.dmg>=3?'#FF66FF': s.dmg>=2?'#66DDFF':'#FFD700';
+      cx.shadowBlur=14+s.dmg*3;
+      cx.fillStyle= s.dmg>=3?'#FFB8FF': s.dmg>=2?'#BFF0FF':'#FFE066';
+      starPath(cx,0,0,5,(13*p.s+4)*pw,(5*p.s+1.6)*pw); cx.fill();
       cx.shadowBlur=0; cx.restore();
     }});
   }
@@ -1356,6 +1542,8 @@ function drawLevel() {
   drawPtcs();
   drawHUD();
   drawControls();
+  drawFloatTexts();
+  if(shopOpen) drawShop();
 
   // Level done overlay — animated celebration / retry card
   if(lvDone){ lvDoneT++; drawLevelDoneOverlay(); }
