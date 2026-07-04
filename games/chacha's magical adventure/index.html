@@ -244,13 +244,18 @@ let gardenSpr=null, gardenPatch=null, gardenAspect=1;
 // The energy orbs and obstacles are ALSO cut from each photo, so what you
 // collect and fight is literally what appears in the pictures.
 const SPRITE_RECT = {
-  cloud:  { orb:{x:.204,y:.674,w:.082,h:.062}, mon:{x:.018,y:.537,w:.140,h:.096} },
-  ocean:  { orb:{x:.828,y:.335,w:.112,h:.082}, mon:{x:.780,y:.135,w:.145,h:.125} },
-  desert: { orb:{x:.452,y:.808,w:.142,h:.102}, mon:{x:.215,y:.685,w:.110,h:.185}, stat:{x:.185,y:.385,w:.145,h:.225} },
-  ice:    { orb:{x:.565,y:.725,w:.125,h:.093}, mon:{x:.875,y:.455,w:.090,h:.088}, stat:{x:.830,y:.815,w:.160,h:.100} },
-  forest: { orb:{x:.150,y:.738,w:.064,h:.058}, mon:{x:.505,y:.585,w:.280,h:.160}, stat:{x:.878,y:.600,w:.062,h:.064} },
+  cloud:  { orb:{x:.204,y:.674,w:.082,h:.062}, mon:{x:.018,y:.537,w:.140,h:.096},
+            gate:{x:.13,y:.135,w:.74,h:.42} },
+  ocean:  { orb:{x:.828,y:.335,w:.112,h:.082}, mon:{x:.780,y:.135,w:.145,h:.125},
+            gate:{x:.32,y:.09,w:.36,h:.24} },
+  desert: { orb:{x:.452,y:.808,w:.142,h:.102}, mon:{x:.215,y:.685,w:.110,h:.185}, stat:{x:.185,y:.385,w:.145,h:.225},
+            gate:{x:.34,y:.08,w:.32,h:.22} },
+  ice:    { orb:{x:.565,y:.725,w:.125,h:.093}, mon:{x:.875,y:.455,w:.090,h:.088}, stat:{x:.830,y:.815,w:.160,h:.100},
+            gate:{x:.25,y:.05,w:.50,h:.33} },
+  forest: { orb:{x:.150,y:.738,w:.064,h:.058}, mon:{x:.505,y:.585,w:.280,h:.160}, stat:{x:.878,y:.600,w:.062,h:.064},
+            gate:{x:.21,y:.07,w:.43,h:.26} },
 };
-let orbSpr=null, monSpr=null, statSpr=null, orbAsp=1, monAsp=1, statAsp=1;
+let orbSpr=null, monSpr=null, statSpr=null, gateSpr=null, orbAsp=1, monAsp=1, statAsp=1;
 
 // Crop a region of img into an offscreen canvas with a soft elliptical
 // feathered edge, so the cut-out blends into the scene instead of looking
@@ -288,7 +293,8 @@ function buildHero(cfg) {
     if(S.orb){ orbSpr =maskCrop(img,S.orb.x*iw, S.orb.y*ih, S.orb.w*iw, S.orb.h*ih); orbAsp =S.orb.w*iw/(S.orb.h*ih); }
     if(S.mon){ monSpr =maskCrop(img,S.mon.x*iw, S.mon.y*ih, S.mon.w*iw, S.mon.h*ih); monAsp =S.mon.w*iw/(S.mon.h*ih); }
     if(S.stat){ statSpr=maskCrop(img,S.stat.x*iw,S.stat.y*ih,S.stat.w*iw,S.stat.h*ih); statAsp=S.stat.w*iw/(S.stat.h*ih); }
-  }
+    gateSpr = S.gate ? maskCrop(img,S.gate.x*iw,S.gate.y*ih,S.gate.w*iw,S.gate.h*ih) : null;
+  } else gateSpr = null;
 }
 
 // Cover the heroine's original printed position with nearby texture so she
@@ -882,95 +888,70 @@ function drawOrb(o, sx, sy, s) {
   cx.restore();
 }
 
-// ── Draw goal — glows right on the photo's own portal at the end of the road ──
+// ── Draw goal — the photo's OWN gate, dimmed while locked, ablaze when open ───
 function drawGoal() {
-  const gx=W/2, gy=LEVELS[lvIdx].hY-58;
-  const gs=0.88*Math.min(camZoom(), 2.6);   // portal marker grows as you approach
-  cx.save(); cx.translate(gx,gy); cx.scale(gs,gs);
-  if(!goalOpen) {
-    cx.fillStyle='rgba(0,0,0,0.4)'; cx.beginPath(); roundRect2(cx,-44,-32,88,62,12); cx.fill();
-    cx.strokeStyle='rgba(255,255,255,0.35)'; cx.lineWidth=1.5; cx.beginPath(); roundRect2(cx,-44,-32,88,62,12); cx.stroke();
-    cx.fillStyle='rgba(255,255,255,0.8)'; cx.font='bold 12px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
-    cx.fillText('🔒 终点', 0, -8);
-    cx.fillStyle='rgba(200,220,255,0.7)'; cx.font='10px sans-serif'; cx.fillText(`收集${LEVELS[lvIdx].need}个`, 0, 12);
-    cx.restore(); return;
+  const cfg=LEVELS[lvIdx], G=SPRITE_RECT[cfg.bg] && SPRITE_RECT[cfg.bg].gate;
+  const img=IMG[cfg.bg];
+  if(!gateSpr || !G || !img || !img.naturalWidth){ return; }
+  const iw=img.naturalWidth, ih=img.naturalHeight;
+  // where the photo's gate currently sits on screen (tracks the camera zoom)
+  const dx=BGT.ox+G.x*iw*BGT.sc, dy=BGT.oy+G.y*ih*BGT.sc;
+  const dw=G.w*iw*BGT.sc,        dh=G.h*ih*BGT.sc;
+  const gcx=dx+dw/2, gcy=dy+dh/2;
+
+  if(!goalOpen){
+    // locked: the real gate goes dark and sleepy
+    cx.save();
+    cx.filter='grayscale(0.75) brightness(0.55)';
+    cx.drawImage(gateSpr, dx, dy, dw, dh);
+    cx.filter='none';
+    cx.restore();
+    // lock tag hanging at the gate's heart
+    cx.save();
+    cx.fillStyle='rgba(0,0,0,0.55)';
+    cx.beginPath(); roundRect2(cx,gcx-52,gcy-24,104,48,12); cx.fill();
+    cx.strokeStyle='rgba(255,255,255,0.4)'; cx.lineWidth=1.5;
+    cx.beginPath(); roundRect2(cx,gcx-52,gcy-24,104,48,12); cx.stroke();
+    cx.fillStyle='rgba(255,255,255,0.9)'; cx.font='bold 14px sans-serif';
+    cx.textAlign='center'; cx.textBaseline='middle';
+    cx.fillText('🔒 终点', gcx, gcy-7);
+    cx.fillStyle='rgba(255,224,120,0.95)'; cx.font='11px sans-serif';
+    cx.fillText(`收集 ${cfg.need} 个能量球`, gcx, gcy+11);
+    cx.restore();
+    return;
   }
-  const pulse=1+Math.sin(tick*0.08)*0.1;
-  switch(lvIdx) {
-    case 0: { // Cloud - Star arch
-      cx.shadowColor='#FFD700'; cx.shadowBlur=22;
-      for(let i=0;i<9;i++){
-        const a=-Math.PI+i*(Math.PI/8), sr=48*pulse;
-        const h=(tick*3+i*30)%360;
-        cx.fillStyle=`hsl(${h},100%,70%)`;
-        starPath(cx,Math.cos(a)*sr,Math.sin(a)*sr,5,10+Math.sin(tick*0.06+i)*3,4); cx.fill();
-      }
-      const cg=cx.createRadialGradient(0,0,0,0,0,36*pulse);
-      cg.addColorStop(0,'rgba(255,255,200,0.95)'); cg.addColorStop(0.4,'rgba(200,180,255,0.7)'); cg.addColorStop(1,'rgba(180,140,255,0)');
-      cx.fillStyle=cg; cx.beginPath(); cx.arc(0,0,36*pulse,0,Math.PI*2); cx.fill();
-      cx.shadowBlur=0; cx.fillStyle='white'; cx.font='bold 11px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle'; cx.fillText('★ 终点 ★',0,30); break;
-    }
-    case 1: { // Ocean - Glowing coral arch
-      cx.shadowColor='rgba(100,200,255,0.8)'; cx.shadowBlur=25;
-      cx.strokeStyle='rgba(100,210,255,0.9)'; cx.lineWidth=6; cx.beginPath(); cx.arc(0,0,44*pulse,Math.PI,0); cx.stroke();
-      cx.strokeStyle='rgba(180,240,255,0.5)'; cx.lineWidth=2; cx.beginPath(); cx.arc(0,0,38*pulse,Math.PI,0); cx.stroke();
-      const ug=cx.createRadialGradient(0,-10,0,0,-5,40*pulse);
-      ug.addColorStop(0,'rgba(200,240,255,0.9)'); ug.addColorStop(1,'rgba(60,160,220,0)');
-      cx.fillStyle=ug; cx.beginPath(); cx.arc(0,0,40*pulse,Math.PI,0); cx.fill();
-      for(let i=0;i<5;i++){
-        const a=-Math.PI+i*(Math.PI/4); cx.fillStyle=`hsla(${180+i*20},100%,75%,0.9)`; cx.shadowColor='rgba(150,240,255,0.8)';
-        starPath(cx,Math.cos(a)*44*pulse,Math.sin(a)*44*pulse,5,8,3); cx.fill();
-      }
-      cx.shadowBlur=0; cx.fillStyle='rgba(200,240,255,0.9)'; cx.font='bold 11px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle'; cx.fillText('⭐ 终点 ⭐',0,30); break;
-    }
-    case 2: { // Desert - Sandy star portal
-      cx.shadowColor='rgba(255,180,50,0.7)'; cx.shadowBlur=20;
-      for(let i=0;i<=8;i++){
-        const a=-Math.PI+i*(Math.PI/8), ar=46*pulse;
-        cx.fillStyle=i%2===0?'#D4A017':'#AA7A10';
-        cx.save(); cx.translate(Math.cos(a)*ar,Math.sin(a)*ar); cx.rotate(a+Math.PI/2); cx.fillRect(-8,-6,16,12); cx.restore();
-      }
-      for(let i=0;i<5;i++){
-        const a=-Math.PI*0.85+i*(Math.PI*1.7/4);
-        cx.fillStyle='#FFD700'; cx.shadowColor='#FFD700'; cx.shadowBlur=10;
-        starPath(cx,Math.cos(a)*46*pulse,Math.sin(a)*46*pulse,5,9,4); cx.fill();
-      }
-      const dg=cx.createRadialGradient(0,-5,0,0,-5,38*pulse);
-      dg.addColorStop(0,'rgba(255,230,150,0.9)'); dg.addColorStop(1,'rgba(255,180,50,0)');
-      cx.fillStyle=dg; cx.beginPath(); cx.arc(0,0,38*pulse,Math.PI,0); cx.fill();
-      cx.shadowBlur=0; cx.fillStyle='#FFE066'; cx.font='bold 11px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle'; cx.fillText('✨ 终点 ✨',0,30); break;
-    }
-    case 3: { // Ice - Pointed palace gate
-      cx.shadowColor='rgba(150,230,255,0.9)'; cx.shadowBlur=28;
-      cx.strokeStyle='rgba(180,235,255,0.9)'; cx.lineWidth=4;
-      cx.beginPath(); cx.moveTo(-44*pulse,20); cx.lineTo(-44*pulse,-25); cx.lineTo(0,-55*pulse); cx.lineTo(44*pulse,-25); cx.lineTo(44*pulse,20); cx.stroke();
-      const icg=cx.createLinearGradient(0,-50,0,20);
-      icg.addColorStop(0,'rgba(200,245,255,0.85)'); icg.addColorStop(1,'rgba(100,200,240,0.3)');
-      cx.fillStyle=icg; cx.beginPath(); cx.moveTo(-44*pulse,20); cx.lineTo(-44*pulse,-25); cx.lineTo(0,-55*pulse); cx.lineTo(44*pulse,-25); cx.lineTo(44*pulse,20); cx.closePath(); cx.fill();
-      cx.fillStyle='white'; cx.shadowColor='rgba(200,240,255,0.9)'; cx.shadowBlur=10;
-      [[0,-42*pulse],[-36*pulse,-5],[36*pulse,-5]].forEach(([sx,sy])=>{
-        for(let i=0;i<6;i++){ const a=i*Math.PI/3; cx.strokeStyle='rgba(200,240,255,0.8)'; cx.lineWidth=2; cx.beginPath(); cx.moveTo(sx,sy); cx.lineTo(sx+Math.cos(a)*12,sy+Math.sin(a)*12); cx.stroke(); }
-      });
-      cx.shadowBlur=0; cx.fillStyle='rgba(220,248,255,0.95)'; cx.font='bold 11px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle'; cx.fillText('❄ 终点 ❄',0,32); break;
-    }
-    case 4: { // Forest - Flower vine arch
-      cx.shadowColor='rgba(100,200,100,0.7)'; cx.shadowBlur=20;
-      cx.strokeStyle='#3A7A20'; cx.lineWidth=7; cx.beginPath(); cx.arc(0,0,44*pulse,Math.PI,0); cx.stroke();
-      cx.strokeStyle='#5AB040'; cx.lineWidth=3; cx.beginPath(); cx.arc(0,0,44*pulse,Math.PI,0); cx.stroke();
-      const flC=['#FF6699','#FFAA00','#FF44AA','#FF99CC','#FFDD44','#AA44FF','#44DDAA'];
-      for(let i=0;i<7;i++){
-        const a=-Math.PI+i*(Math.PI/6), fr=44*pulse;
-        cx.save(); cx.translate(Math.cos(a)*fr,Math.sin(a)*fr);
-        cx.fillStyle=flC[i%flC.length];
-        for(let p=0;p<5;p++){ const pa=p*Math.PI*2/5; cx.beginPath(); cx.arc(Math.cos(pa)*5,Math.sin(pa)*5,5,0,Math.PI*2); cx.fill(); }
-        cx.fillStyle='#FFD700'; cx.beginPath(); cx.arc(0,0,4,0,Math.PI*2); cx.fill(); cx.restore();
-      }
-      const fgg=cx.createRadialGradient(0,-5,0,0,-5,38*pulse);
-      fgg.addColorStop(0,'rgba(180,255,180,0.9)'); fgg.addColorStop(1,'rgba(100,200,100,0)');
-      cx.fillStyle=fgg; cx.beginPath(); cx.arc(0,0,38*pulse,Math.PI,0); cx.fill();
-      cx.shadowBlur=0; cx.fillStyle='#90EE20'; cx.font='bold 11px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle'; cx.fillText('🌸 终点 🌸',0,30); break;
-    }
+
+  // open: the gate awakens — breathing glow, brighter than the photo around it
+  const pulse=1+Math.sin(tick*0.07)*0.03;
+  cx.save();
+  cx.translate(gcx,gcy); cx.scale(pulse,pulse); cx.translate(-gcx,-gcy);
+  cx.shadowColor='rgba(255,230,140,0.95)'; cx.shadowBlur=34+Math.sin(tick*0.1)*10;
+  cx.filter='brightness(1.35) saturate(1.35)';
+  cx.drawImage(gateSpr, dx, dy, dw, dh);
+  cx.filter='none'; cx.shadowBlur=0;
+  cx.restore();
+
+  // sparkles orbiting along the gate's outline
+  for(let i=0;i<7;i++){
+    const a=tick*0.03+i*Math.PI*2/7;
+    const sx=gcx+Math.cos(a)*dw*0.46, sy=gcy+Math.sin(a)*dh*0.46;
+    const tw=(Math.sin(tick*0.15+i*1.7)+1)/2;
+    cx.save();
+    cx.fillStyle=`hsla(${(tick*2+i*51)%360},100%,75%,${0.35+0.6*tw})`;
+    cx.shadowColor='rgba(255,255,255,0.9)'; cx.shadowBlur=8;
+    starPath(cx,sx,sy,4,4+3*tw,1.8); cx.fill();
+    cx.restore();
   }
+  cx.shadowBlur=0;
+
+  // welcoming label under the gate
+  cx.save();
+  const ly=dy+dh+12;
+  cx.font='bold 13px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle';
+  cx.lineWidth=4; cx.strokeStyle='rgba(30,10,40,0.7)'; cx.lineJoin='round';
+  cx.strokeText('✨ 终点开启，走进大门！ ✨', gcx, ly);
+  cx.fillStyle='#FFE889';
+  cx.fillText('✨ 终点开启，走进大门！ ✨', gcx, ly);
   cx.restore();
 }
 
