@@ -222,7 +222,7 @@ let winT = 0;
 
 // Player — lives in world (u,z) space; x/y are the projected screen coords
 const PL = { u:0, z:0.08, x:0, y:0, w:34, h:46, spd:3.8, inv:0, dir:1, atkCd:0, shield:0 };
-let monsters = [], shots = [];
+let monsters = [], shots = [], spawnTimer = 0;
 
 // ── Photo-hero sprites ─────────────────────────────────────────────────────────
 // Each level's heroine (with her mount) is CUT OUT of the level photo itself and
@@ -399,25 +399,34 @@ function startLevel(i) {
                 r:16, alive:true, phase:Math.random()*Math.PI*2 });
 
   // Monsters guard the road — mobile ones chase, static ones block
-  const diff = 1 + i*0.12;            // later levels: faster monsters
+  for(let j=0; j<cfg.obsCount; j++) spawnMonster(j%5>=3);
+  spawnTimer=0;
+  scene='level';
+}
+
+// ── Spawn one monster on the road, away from 茶茶 ──────────────────────────────
+function spawnMonster(preferStatic) {
+  const cfg=LEVELS[lvIdx];
+  const diff = 1 + lvIdx*0.12;        // later levels: faster monsters
   const mobileOf = { wand:'wand', jelly:'jelly', cactus:'person', snowman:'snowman', tiger:'tiger' };
   const staticOf = { wand:null,   jelly:null,    cactus:'cactus', snowman:'spike',   tiger:'mushroom' };
-  for(let j=0; j<cfg.obsCount; j++) {
-    const stat = staticOf[cfg.obsType] && (j%5>=3);
-    const variant = stat ? staticOf[cfg.obsType] : mobileOf[cfg.obsType];
-    let mu, mz;
-    do { mu=-0.8+Math.random()*1.6; mz=0.18+Math.random()*0.65; }
-    while(Math.hypot(mu-PL.u, (mz-PL.z)*3) < 0.5);
-    monsters.push({
-      u:mu, z:mz, homeU:mu, variant,
-      hp: stat?2:3, maxHp: stat?2:3,
-      spd:(0.0012+Math.random()*0.0014)*diff,
-      aggro:0.22+Math.random()*0.10,      // small, varied detection range
-      mobile:!stat, wob:Math.random()*Math.PI*2,
-      flash:0, alive:true,
-    });
-  }
-  scene='level';
+  const stat = staticOf[cfg.obsType] && preferStatic;
+  const variant = stat ? staticOf[cfg.obsType] : mobileOf[cfg.obsType];
+  let mu, mz, tries=0;
+  do {
+    mu=-0.8+Math.random()*1.6;
+    mz=Math.max(0.14, Math.min(0.88, camZ+0.10+Math.random()*0.72));
+  } while(Math.hypot(mu-PL.u, (mz-PL.z)*3) < 0.5 && ++tries<20);
+  const m={
+    u:mu, z:mz, homeU:mu, variant,
+    hp: stat?2:3, maxHp: stat?2:3,
+    spd:(0.0012+Math.random()*0.0014)*diff,
+    aggro:0.22+Math.random()*0.10,      // small, varied detection range
+    mobile:!stat, wob:Math.random()*Math.PI*2,
+    flash:0, alive:true,
+  };
+  monsters.push(m);
+  return m;
 }
 
 // ── Attack: 茶茶 fires a magic star forward ─────────────────────────────────────
@@ -1365,6 +1374,22 @@ function updateLevel() {
   if(lvDone) return;
   if(shopOpen) return;                 // world pauses while shopping
   if(PL.shield>0) PL.shield--;
+
+  // ── Keep the road alive: defeated monsters respawn after a few seconds ──────
+  const aliveCount = monsters.reduce((n,m)=>n+(m.alive?1:0), 0);
+  const cap = LEVELS[lvIdx].obsCount;
+  if(aliveCount < cap){
+    spawnTimer++;
+    const interval = Math.max(80, 170 - lvIdx*18);   // later levels refill faster
+    if(spawnTimer >= interval){
+      spawnTimer = 0;
+      const m = spawnMonster(Math.random()<0.35);
+      const mp = proj(m.u, m.z);
+      spawnOrbPtcs(mp.x, mp.y);                       // poof so it's not a cheap shot
+    }
+  } else spawnTimer = 0;
+  // prune long-dead monsters so the array doesn't grow forever
+  if(monsters.length > cap*3) monsters = monsters.filter(m=>m.alive);
 
   // ── Move 茶茶 through the 3D scene: ▲ walks INTO the photo, ▼ back out ──────
   const uSpd=0.022, zSpd=0.0085;
